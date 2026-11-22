@@ -1,0 +1,119 @@
+// App lock: 6-digit PIN + fingerprint, wrong-PIN lockout, database key custody.
+// Everything here is stored in expo-secure-store (Android Keystore backed).
+import * as Crypto from 'expo-crypto';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
+
+const K_SALT = 'finy_pin_salt';
+const K_HASH = 'finy_pin_hash';
+const K_DBKEY = 'finy_db_key';
+const K_FAILS = 'finy_pin_fails';
+const K_BIO = 'finy_biometric';
+
+export const PIN_LENGTH = 6;
+const HASH_ROUNDS = 400;
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPin(pin: string, salt: string): Promise<string> {
+  let h = `${salt}:${pin}`;
+  for (let i = 0; i < HASH_ROUNDS; i++) {
+    h = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${salt}:${h}`);
+  }
+  return h;
+}
+
+export async function hasPin(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(K_HASH)) !== null;
+}
+
+export async function setPin(pin: string): Promise<void> {
+  const salt = toHex(await Crypto.getRandomBytesAsync(16));
+  await SecureStore.setItemAsync(K_SALT, salt);
+  await SecureStore.setItemAsync(K_HASH, await hashPin(pin, salt));
+  await SecureStore.deleteItemAsync(K_FAILS);
+}
+
+interface FailState {
+  count: number;
+  lockedUntil: number;
+}
+
+async function readFails(): Promise<FailState> {
+  const raw = await SecureStore.getItemAsync(K_FAILS);
+  if (!raw) return { count: 0, lockedUntil: 0 };
+  try {
+    return JSON.parse(raw) as FailState;
+  } catch {
+    return { count: 0, lockedUntil: 0 };
+  }
+}
+
+/** Seconds the keypad stays disabled after `count` consecutive wrong PINs. */
+function lockoutSeconds(count: number): number {
+  if (count < 5) return 0;
+  return Math.min(30 * Math.pow(2, count - 5), 3600);
+}
+
+export async function lockedForSeconds(): Promise<number> {
+  const f = await readFails();
+  return Math.max(0, Math.ceil((f.lockedUntil - Date.now()) / 1000));
+}
+
+export type PinResult = { ok: true } | { ok: false; waitSec: number; attempts: number };
+
+export async function verifyPin(pin: string): Promise<PinResult> {
+  const fails = await readFails();
+  const wait = Math.ceil((fails.lockedUntil - Date.now()) / 1000);
+  if (wait > 0) return { ok: false, waitSec: wait, attempts: fails.count };
+
+  const salt = await SecureStore.getItemAsync(K_SALT);
+  const stored = await SecureStore.getItemAsync(K_HASH);
+  if (salt && stored && (await hashPin(pin, salt)) === stored) {
+    await SecureStore.deleteItemAsync(K_FAILS);
+    return { ok: true };
+  }
+  const count = fails.count + 1;
+  const waitSec = lockoutSeconds(count);
+  await SecureStore.setItemAsync(K_FAILS, JSON.stringify({ count, lockedUntil: Date.now() + waitSec * 1000 }));
+  return { ok: false, waitSec, attempts: count };
+}
+
+export async function biometricAvailable(): Promise<boolean> {
+  return (await LocalAuthentication.hasHardwareAsync()) && (await LocalAuthentication.isEnrolledAsync());
+}
+
+/**
+ * Whether the user allows fingerprint unlock. Kept outside the encrypted
+ * database because the lock screen needs it before the database is opened.
+ */
+export async function getBiometricPref(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(K_BIO)) !== '0';
+}
+
+export async function setBiometricPref(on: boolean): Promise<void> {
+  await SecureStore.setItemAsync(K_BIO, on ? '1' : '0');
+}
+
+export async function biometricUnlock(): Promise<boolean> {
+  if (!(await getBiometricPref())) return false;
+  if ((await lockedForSeconds()) > 0) return false;
+  const res = await LocalAuthentication.authenticateAsync({
+    promptMessage: 'Mở khoá Finy',
+    cancelLabel: 'Dùng mã PIN',
+    disableDeviceFallback: true,
+  });
+  return res.success;
+}
+
+/** Returns the database key, creating it on first run. */
+export async function getDbKey(): Promise<string> {
+  let key = await SecureStore.getItemAsync(K_DBKEY);
+  if (!key) {
+    key = toHex(await Crypto.getRandomBytesAsync(32));
+    await SecureStore.setItemAsync(K_DBKEY, key);
+  }
+  return key;
+}

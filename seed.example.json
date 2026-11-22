@@ -1,0 +1,12 @@
+{
+  "month": {
+    "income": 30000000,
+    "items": [
+      { "name": "Tiền nhà", "amount": 8000000, "kind": "expense" },
+      { "name": "Chi tiêu hằng ngày", "amount": 6000000, "kind": "expense", "daily": true },
+      { "name": "Trả góp", "amount": 3000000, "kind": "debt" },
+      { "name": "Để dành", "amount": 10000000, "kind": "saving" }
+    ]
+  },
+  "accounts": [{ "name": "Tài khoản chính", "kind": "bank", "balance": 50000000 }]
+}
