@@ -116,7 +116,7 @@ export default function CreditCycleScreen() {
               </Pressable>
             );
           })}
-        <Btn label="Thêm khoản trả góp" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setInst({ open: true, item: null })} />
+        <Txt v="small" style={{ marginTop: 6 }}>Thêm hoặc sửa trả góp ở Ngân sách → Cố định.</Txt>
       </Card>
 
       {flow.onCardLines.length ? (

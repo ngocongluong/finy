@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { ACCOUNT_KINDS, AccountSheet, FixedSheet } from '../../components/sheets';
+import { ACCOUNT_KINDS, AccountSheet, FixedSheet, InstalmentSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { flowTable, monthFlow, netWorth } from '../../lib/finance';
-import { monthKey, monthLabel, monthShort } from '../../lib/format';
+import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, monthFlow, netWorth } from '../../lib/finance';
+import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
-import type { Account, FixedItem } from '../../lib/types';
+import type { Account, FixedItem, Instalment } from '../../lib/types';
 
 type View3 = 'table' | 'fixed' | 'accounts';
 
@@ -44,6 +44,11 @@ export default function Budget() {
   const setFixedSheet = (v: { direction: 'in' | 'out'; item: FixedItem | null } | null) =>
     setFixedSheetState((cur) => (v ? { open: true, ...v } : { ...cur, open: false }));
   const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  const [inst, setInst] = useState<{ open: boolean; item: Instalment | null }>({ open: false, item: null });
+  const instalments = useStore((s) => s.instalments);
+  const statementDay = useStore((s) => s.settings.statementDay);
+  // The statement cycle open today: instalment progress is shown against it.
+  const cycleMonth = cycleMonthOf(dateKey(), statementDay);
 
   const rows = useMemo(() => flowTable(budget, now, count, credit), [budget, credit, now, count]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
@@ -170,6 +175,38 @@ export default function Budget() {
             <Btn label="Thêm khoản chi" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'out', item: null })} />
           </Card>
 
+          <Card style={{ gap: 2 }}>
+            <Row style={{ marginBottom: 6 }}>
+              <Txt v="heading">Trả góp qua thẻ</Txt>
+              <Amount value={instalments.reduce((s, p) => { const n = instalmentPart(p, cycleMonth); return s + (n ? instalmentAmount(p, n) : 0); }, 0)} color={c.muted} />
+            </Row>
+            {instalments.length === 0 ? (
+              <Txt v="label">Chưa có khoản trả góp nào. Nhập tổng tiền và số tháng, Finy tự chia ra mỗi tháng và cộng vào chi tín dụng.</Txt>
+            ) : null}
+            {[...instalments]
+              .sort((a, b) => (instalmentPart(b, cycleMonth) ? 1 : 0) - (instalmentPart(a, cycleMonth) ? 1 : 0) || a.startMonth.localeCompare(b.startMonth))
+              .map((p) => {
+                const part = instalmentPart(p, cycleMonth);
+                const end = shiftMonth(p.startMonth, p.months - 1);
+                const sub = part
+                  ? `Kỳ ${part}/${p.months} · tổng ${money(p.total)} · đến ${monthLabel(end).toLowerCase()}`
+                  : cycleMonth < p.startMonth
+                    ? `${p.months} tháng · bắt đầu ${monthLabel(p.startMonth).toLowerCase()}`
+                    : `Đã trả xong ${monthLabel(end).toLowerCase()}`;
+                return (
+                  <Line
+                    key={p.id}
+                    name={p.name}
+                    sub={sub}
+                    amount={instalmentAmount(p, part ?? 1)}
+                    color={part ? c.text : c.muted}
+                    onPress={() => setInst({ open: true, item: p })}
+                  />
+                );
+              })}
+            <Btn label="Thêm khoản trả góp" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setInst({ open: true, item: null })} />
+          </Card>
+
           <Card style={{ gap: 6 }}>
             <Txt v="label">{base.saving < 0 ? 'Mỗi tháng thiếu (chưa tính phát sinh)' : 'Mỗi tháng để dành được (chưa tính phát sinh)'}</Txt>
             <Amount v="hero" value={Math.abs(base.saving)} color={base.saving < 0 ? c.negative : c.positive} />
@@ -205,6 +242,7 @@ export default function Budget() {
       <View style={{ height: gap }} />
       <FixedSheet visible={fixedSheet.open} onClose={() => setFixedSheet(null)} direction={fixedSheet.direction} item={fixedSheet.item} />
       <AccountSheet visible={account !== undefined} onClose={() => setAccount(undefined)} account={account} />
+      <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />
     </Screen>
   );
 }
