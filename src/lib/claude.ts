@@ -5,7 +5,7 @@ import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
 import Constants from 'expo-constants';
 import { Alert } from 'react-native';
 import { z } from 'zod';
-import { creditCycle, loanDebtNow, loanEndMonth, loanPeriodAt, loanPeriods, loanTotalInterest, projectedCash, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
+import { creditCycle, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, loanEndMonth, loanPeriodAt, loanPeriods, loanTotalInterest, projectedCash, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
 import { dateKey, fmtTime, fmtVND, monthKey, monthLabel, shiftMonth, uid } from './format';
 import { project, resolvePlan } from './plan';
 import { useStore } from './store';
@@ -39,7 +39,7 @@ export function describeError(e: unknown): string {
 const SYSTEM = `Bạn là Finy, trợ lý tài chính cá nhân sống trong một ứng dụng Android riêng tư, chỉ có một người dùng duy nhất tại Việt Nam. Người dùng tự xây app này để quản lý tiền của chính mình: bảng thu chi hàng tháng, chi tiêu hằng ngày (nhập tay và giao dịch HSBC lấy từ email), tổng tiền hiện có, và kế hoạch tài chính 5–10 năm.
 
 Bảng thu chi
-App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khoản vay ngân hàng được nhập riêng (số tiền vay, số tháng, tháng trả đầu tiên) và chia thành các giai đoạn: mỗi giai đoạn có lãi suất riêng (cố định hoặc thả nổi dự kiến) và có thể có khoản trả trước ở đầu giai đoạn (hoặc trả toàn bộ dư nợ để tất toán khoản vay trong tháng đó); app tính lại số trả mỗi tháng ở đầu mỗi giai đoạn theo dư nợ còn lại và số tháng còn lại, cộng vào chi cố định trong thời gian vay, và tính khoản trả trước là tiền ra trong tháng đó. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định. Khi số tiền của một khoản cố định đổi theo từng giai đoạn dài (lương tăng từ một tháng trở đi, một nguồn thu chỉ có trong một khoảng thời gian), hãy đặt các giai đoạn cho khoản đó: mỗi giai đoạn từ tháng nào đến tháng nào với số tiền riêng; ngoài các giai đoạn, khoản đó không được tính.
+App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khoản vay ngân hàng được nhập riêng (số tiền vay, số tháng, tháng trả đầu tiên) và chia thành các giai đoạn: mỗi giai đoạn có lãi suất riêng (cố định hoặc thả nổi dự kiến) và có thể có khoản trả trước ở đầu giai đoạn (hoặc trả toàn bộ dư nợ để tất toán khoản vay trong tháng đó); app tính lại số trả mỗi tháng ở đầu mỗi giai đoạn theo dư nợ còn lại và số tháng còn lại, cộng vào chi cố định trong thời gian vay, và tính khoản trả trước là tiền ra trong tháng đó. Khoản vay người thân thì không trả hàng tháng: có lãi hoặc không lãi (lãi đơn theo năm), trả một lần cả gốc lẫn lãi vào cuối thời hạn, và số đó được tính là tiền chi ra trong đúng tháng đến hạn. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định. Khi số tiền của một khoản cố định đổi theo từng giai đoạn dài (lương tăng từ một tháng trở đi, một nguồn thu chỉ có trong một khoảng thời gian), hãy đặt các giai đoạn cho khoản đó: mỗi giai đoạn từ tháng nào đến tháng nào với số tiền riêng; ngoài các giai đoạn, khoản đó không được tính.
 
 Thẻ tín dụng
 Một khoản chi cố định có thể được đánh dấu là "dự chi tín dụng": số tiền người dùng dự định quẹt thẻ mỗi kỳ sao kê. Kỳ sao kê kết thúc vào ngày sao kê hàng tháng và được tính vào tháng có ngày sao kê đó (ví dụ ngày sao kê 14: kỳ 15/11–14/12 thuộc tháng 12). Kỳ chốt vào ngày sao kê của tháng nào thì được trả bằng lương tháng đó. Khi kỳ còn mở, chi của tháng tính theo dự chi (hoặc số đã quẹt nếu nhiều hơn); khi kỳ đã chốt, chi của tháng tính theo đúng số đã quẹt, thay cho dự chi. Giao dịch thẻ lấy từ email HSBC. Các khoản trả góp qua thẻ (người dùng nhập tổng tiền và số tháng) được chia đều và cộng một phần vào mỗi kỳ. Nếu số đã quẹt trong kỳ vượt dự chi, hãy nói rõ cho người dùng biết họ đang vượt bao nhiêu.
@@ -342,6 +342,49 @@ function buildTools(log: (action: string) => void) {
       },
     }),
     betaZodTool({
+      name: 'set_family_loan',
+      description:
+        'Create or edit a loan from family or friends (vay người thân). Nothing is paid monthly: the principal, plus simple interest for the whole term when rate_pct > 0, is paid back in one go in the month that is `months` after start_month; that repayment counts as an expense of that month in the cash-flow table. start_month is the month the money is received. receive=true also counts the money received as income in start_month (only when it is not already in the money on hand). Pass id to edit (ids in the snapshot under cashFlow.familyLoans).',
+      inputSchema: z.object({
+        id: z.string().optional(),
+        name: z.string(),
+        principal: z.number().positive(),
+        start_month: z.string().regex(/^\d{4}-\d{2}$/),
+        months: z.number().int().min(1).max(600).describe('Term in months (2 years = 24)'),
+        rate_pct: z.number().min(0).max(100).describe('Annual simple interest, percent; 0 = no interest'),
+        receive: z.boolean().optional(),
+      }),
+      run: (i) => {
+        const cur = i.id ? s().familyLoans.find((x) => x.id === i.id) : undefined;
+        if (i.id && !cur) return `No family loan with id ${i.id}.`;
+        const l = s().upsertFamilyLoan({
+          id: i.id,
+          name: i.name,
+          principal: i.principal,
+          startMonth: i.start_month,
+          months: i.months,
+          ratePct: i.rate_pct,
+          receive: i.receive ?? cur?.receive,
+        });
+        const total = l.principal + familyLoanInterest(l);
+        log(`${i.id ? 'Đã sửa' : 'Đã thêm'} khoản vay người thân "${l.name}": trả ${fmtVND(total)} vào ${monthLabel(familyLoanDueMonth(l)).toLowerCase()}`);
+        return `Saved ${JSON.stringify({ ...l, dueMonth: familyLoanDueMonth(l), interest: familyLoanInterest(l), totalDue: total })}`;
+      },
+    }),
+    betaZodTool({
+      name: 'delete_family_loan',
+      description: 'Delete a loan from family. The app asks the user to confirm.',
+      inputSchema: z.object({ id: z.string() }),
+      run: async (i) => {
+        const l = s().familyLoans.find((x) => x.id === i.id);
+        if (!l) return `No family loan with id ${i.id}.`;
+        if (!(await confirmAsync('Xoá khoản vay?', `Finy muốn xoá "${l.name}".`))) return 'The user declined the deletion.';
+        s().deleteFamilyLoan(i.id);
+        log(`Đã xoá khoản vay "${l.name}"`);
+        return 'Deleted.';
+      },
+    }),
+    betaZodTool({
       name: 'set_cash_on_hand',
       description: 'Set how much money the user has right now (VND). The Budget table projects it forward month by month with each month\'s saving.',
       inputSchema: z.object({ amount: z.number() }),
@@ -548,7 +591,7 @@ function buildTools(log: (action: string) => void) {
         s().setPlan(patch);
         log('Đã cập nhật kế hoạch dài hạn');
         const st = s();
-        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans }, st.accounts, monthKey(), st.cash));
+        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans, familyLoans: st.familyLoans }, st.accounts, monthKey(), st.cash));
         return `Saved. New base projection (net worth by year): ${JSON.stringify(proj.rows.map((r) => [r.year, Math.round(r.netWorth)]))}`;
       },
     }),
@@ -560,7 +603,7 @@ export function snapshot(): string {
   const st = useStore.getState();
   const today = dateKey();
   const month = monthKey();
-  const budget = { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans };
+  const budget = { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans, familyLoans: st.familyLoans };
   const credit = { txs: st.txs, statementDay: st.settings.statementDay };
   const flow = monthFlow(budget, month, credit);
   const daily = dailyStats(flow.dailyBucket, st.txs, today);
@@ -592,6 +635,14 @@ export function snapshot(): string {
         paymentsMade: loanPaidBefore(l, month),
         balanceNow: loanBalance(l, loanPaidBefore(l, month)),
         totalInterest: loanTotalInterest(l),
+      })),
+      // Loans from family: nothing monthly; principal + simple interest paid in one go in dueMonth.
+      familyLoans: st.familyLoans.map((l) => ({
+        ...l,
+        dueMonth: familyLoanDueMonth(l),
+        interest: familyLoanInterest(l),
+        totalDue: l.principal + familyLoanInterest(l),
+        owedNow: familyLoanOwed(l, month),
       })),
       // Amounts that replace a fixed item's usual amount in one month: { month: { fixedItemId: amount } }
       monthAdjustments: Object.fromEntries(Object.entries(st.overrides).filter(([m]) => m >= month)),
@@ -628,7 +679,8 @@ export function snapshot(): string {
     },
     // Money on hand as entered (and the month), what is owed on bank loans now, and the projection month by month.
     cashOnHand: st.cash,
-    loanDebtNow: loanDebtNow(st.loans, month),
+    // Owed on all loans at the start of this month (bank loans + loans from family, interest so far included).
+    debtNow: debtNow({ loans: st.loans, familyLoans: st.familyLoans }, month),
     projectedCash: st.cash
       ? Object.fromEntries([...projectedCash(budget, st.cash, Array.from({ length: 12 }, (_, i) => shiftMonth(month, i)), credit)].map(([m, v]) => [m, v === null ? null : Math.round(v)]))
       : null,

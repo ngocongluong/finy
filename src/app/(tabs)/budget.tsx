@@ -4,11 +4,11 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, fixedActive, flowTable, loanDebtNow, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, debtNow, familyLoanDueMonth, familyLoanInterest, fixedActive, flowTable, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
-import type { Account, FixedItem, Instalment, Loan } from '../../lib/types';
+import type { Account, FamilyLoan, FixedItem, Instalment, Loan } from '../../lib/types';
 
 type View3 = 'table' | 'fixed' | 'accounts';
 
@@ -69,7 +69,9 @@ export default function Budget() {
   const [inst, setInst] = useState<{ open: boolean; item: Instalment | null }>({ open: false, item: null });
   const instalments = useStore((s) => s.instalments);
   const loans = useStore((s) => s.loans);
-  const [loan, setLoan] = useState<{ open: boolean; item: Loan | null }>({ open: false, item: null });
+  const familyLoans = useStore((s) => s.familyLoans);
+  // The loan form: a bank loan or a loan from family to edit, or neither to add one of either kind.
+  const [loan, setLoan] = useState<{ open: boolean; item: Loan | null; family?: FamilyLoan | null }>({ open: false, item: null });
   const statementDay = useStore((s) => s.settings.statementDay);
   // The statement cycle open today: instalment progress is shown against it.
   const cycleMonth = cycleMonthOf(dateKey(), statementDay);
@@ -79,7 +81,7 @@ export default function Budget() {
   const cash = useStore((s) => s.cash);
   const setCash = useStore((s) => s.setCash);
   const [cashOpen, setCashOpen] = useState(false);
-  const debt = useMemo(() => loanDebtNow(budget.loans, now), [budget.loans, now]);
+  const debt = useMemo(() => debtNow(budget, now), [budget, now]);
   const projected = useMemo(() => projectedCash(budget, cash, rows.map((r) => r.month), credit), [budget, cash, rows, credit]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
   const last = rows[rows.length - 1];
@@ -88,13 +90,16 @@ export default function Budget() {
 
   const fixedIn = budget.fixed.filter((f) => f.direction === 'in');
   const fixedOut = budget.fixed.filter((f) => f.direction === 'out' && f.kind !== 'credit');
-  // The card plan shows as one line: its total, named by the notes of its items.
-  const creditPlan = budget.fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
+  // The card plan shows as one line: its total, named by the notes of its items. An item set
+  // for one month only is not a monthly expense: it shows in that month's detail instead.
+  const monthOnly = (f: FixedItem) => f.kind === 'credit' && !!f.fromMonth && f.fromMonth === f.toMonth;
+  const creditPlan = budget.fixed.filter((f) => f.direction === 'out' && f.kind === 'credit' && !monthOnly(f));
   const [planOpen, setPlanOpen] = useState(false);
   const statementDayForPlan = useStore((s) => s.settings.statementDay);
-  // The plan for the statement cycle open today; items limited to other months are counted apart.
+  // The plan for the statement cycle open today; items for other periods are counted apart.
   const creditPlanNow = creditPlan.filter((f) => fixedActive(f, cycleMonthOf(dateKey(), statementDayForPlan)));
-  const base = monthFlow({ ...budget, oneOffs: [], overrides: {} }, now);
+  // A usual month: without one-offs, one-month adjustments or card items, and family-loan events.
+  const base = monthFlow({ ...budget, fixed: budget.fixed.filter((f) => !monthOnly(f)), oneOffs: [], overrides: {}, familyLoans: [] }, now);
   const empty = budget.fixed.length === 0;
   const cell = { flex: 1, textAlign: 'right' as const };
 
@@ -134,7 +139,7 @@ export default function Budget() {
               <Row style={{ gap: 12 }}>
                 <View style={{ flex: 1 }}>
                   <Txt v="label">Tiền đang nợ</Txt>
-                  <Txt v="small">{budget.loans?.length ? 'dư nợ vay ngân hàng hiện tại' : 'Chưa có khoản vay — nhập ở Cố định'}</Txt>
+                  <Txt v="small">{budget.loans?.length || budget.familyLoans?.length ? 'dư nợ các khoản vay hiện tại' : 'Chưa có khoản vay — nhập ở Cố định'}</Txt>
                 </View>
                 <Amount v="heading" value={debt} color={debt > 0 ? c.negative : c.text} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
               </Row>
@@ -246,10 +251,10 @@ export default function Budget() {
               name="Dự chi tín dụng"
               sub={
                 creditPlan.length
-                  ? [creditPlanNow.map((f) => f.name).join(', '), creditPlan.length > creditPlanNow.length ? `+${creditPlan.length - creditPlanNow.length} khoản tháng khác` : '']
+                  ? [creditPlanNow.map((f) => f.name).join(', '), creditPlan.length > creditPlanNow.length ? `+${creditPlan.length - creditPlanNow.length} khoản giai đoạn khác` : '']
                       .filter(Boolean)
                       .join(' · ') || 'Không có khoản nào áp dụng kỳ này'
-                  : 'Chưa đặt — chạm để nhập các khoản dự chi'
+                  : 'Chưa có khoản hàng tháng — chạm để nhập'
               }
               amount={creditPlanNow.reduce((s, f) => s + f.amount, 0)}
               icon={<Ionicons name="card-outline" size={20} color={c.muted} />}
@@ -275,11 +280,20 @@ export default function Budget() {
 
           <Card eye={'budget.loans'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
-              <Txt v="heading">Vay ngân hàng</Txt>
-              <Amount value={loans.reduce((s, l) => s + loanPayment(l, now), 0)} color={c.muted} />
+              <Txt v="heading">Quản lý khoản vay</Txt>
+              {/* Paid on loans this month: bank payments, and a family loan when it falls due now. */}
+              <Amount
+                value={
+                  loans.reduce((s, l) => s + loanPayment(l, now), 0) +
+                  familyLoans.reduce((s, l) => s + (familyLoanDueMonth(l) === now ? l.principal + familyLoanInterest(l) : 0), 0)
+                }
+                color={c.muted}
+              />
             </Row>
-            {loans.length === 0 ? (
-              <Txt v="label">Chưa có khoản vay nào. Nhập số tiền vay, lãi suất và thời hạn, Finy tự tính số trả mỗi tháng và cộng vào chi cố định.</Txt>
+            {loans.length + familyLoans.length === 0 ? (
+              <Txt v="label">
+                Chưa có khoản vay nào. Vay ngân hàng: Finy tự tính số trả mỗi tháng và cộng vào chi cố định. Vay người thân: trả một lần (gốc + lãi) vào cuối thời hạn, tính vào đúng tháng đó.
+              </Txt>
             ) : null}
             {loans.map((l) => {
               const paid = loanPaidBefore(l, now);
@@ -296,9 +310,38 @@ export default function Budget() {
                   : early
                     ? `Đã tất toán ${monthLabel(final).toLowerCase()}`
                     : 'Đã trả xong';
-              return <Line key={l.id} name={l.name} sub={sub} amount={running ? loanPayment(l, now) : loanPayment(l)} color={running ? c.text : c.muted} onPress={() => setLoan({ open: true, item: l })} />;
+              return (
+                <Line
+                  key={l.id}
+                  name={l.name}
+                  sub={`Ngân hàng · ${sub}`}
+                  amount={running ? loanPayment(l, now) : loanPayment(l)}
+                  color={running ? c.text : c.muted}
+                  onPress={() => setLoan({ open: true, item: l, family: null })}
+                />
+              );
             })}
-            <Btn label="Thêm khoản vay" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setLoan({ open: true, item: null })} />
+            {familyLoans.map((l) => {
+              // Nothing monthly: the principal and interest in one payment at the end of the term.
+              const due = familyLoanDueMonth(l);
+              const total = l.principal + familyLoanInterest(l);
+              const rate = l.ratePct > 0 ? `lãi ${String(l.ratePct).replace('.', ',')}%/năm` : 'không lãi';
+              const sub =
+                now > due
+                  ? `Người thân · đã trả ${monthLabel(due).toLowerCase()}`
+                  : `Người thân · ${rate} · trả một lần ${monthLabel(due).toLowerCase()}`;
+              return (
+                <Line
+                  key={l.id}
+                  name={l.name}
+                  sub={sub}
+                  amount={total}
+                  color={now > due ? c.muted : c.text}
+                  onPress={() => setLoan({ open: true, item: null, family: l })}
+                />
+              );
+            })}
+            <Btn label="Thêm khoản vay" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setLoan({ open: true, item: null, family: null })} />
           </Card>
 
           <Card eye={'budget.instalments'} style={{ gap: 2 }}>
@@ -378,7 +421,7 @@ export default function Budget() {
         onSave={(n) => setCash(n ?? 0)}
       />
       <CreditPlanSheet visible={planOpen} onClose={() => setPlanOpen(false)} month={cycleMonth} />
-      <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} />
+      <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} familyItem={loan.family ?? null} />
       <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />
     </Screen>
   );

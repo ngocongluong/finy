@@ -1,7 +1,7 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FixedItem, FixedPeriod, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
@@ -12,6 +12,57 @@ export interface Budget {
   instalments?: Instalment[];
   /** Bank loans; their monthly payment is a fixed expense while they run. */
   loans?: Loan[];
+  /** Loans from family: one repayment (principal + interest) at the end of the term. */
+  familyLoans?: FamilyLoan[];
+}
+
+// ---- loans from family (one repayment at the end) ----
+
+/** A stored loan from family in shape: whole đồng, a term of 1–600 months, a rate of 0–100 %. */
+export function normalizeFamilyLoan(raw: unknown): FamilyLoan {
+  const r = raw as Partial<FamilyLoan>;
+  return {
+    id: r.id ?? '',
+    name: r.name ?? '',
+    principal: Math.max(0, Math.round(Number(r.principal) || 0)),
+    startMonth: typeof r.startMonth === 'string' && /^\d{4}-\d{2}$/.test(r.startMonth) ? r.startMonth : '1970-01',
+    months: Math.min(600, Math.max(1, Math.round(Number(r.months) || 1))),
+    ratePct: Math.min(100, Math.max(0, Number(r.ratePct) || 0)),
+    ...(r.receive ? { receive: true } : {}),
+  };
+}
+
+/** The month the money is paid back: the term after the month it was received. */
+export function familyLoanDueMonth(l: Pick<FamilyLoan, 'startMonth' | 'months'>): string {
+  return shiftMonth(l.startMonth, l.months);
+}
+
+/** Simple interest for the whole term: principal × rate a year × years. */
+export function familyLoanInterest(l: Pick<FamilyLoan, 'principal' | 'ratePct' | 'months'>): number {
+  return Math.round((l.principal * l.ratePct * l.months) / 100 / 12);
+}
+
+/**
+ * Owed on a loan from family: nothing before the month the money is received
+ * or once it is paid back; in between the principal plus the interest so far.
+ * 'during' a month: as it stands in that month (the principal in the month the
+ * money comes in, everything in the month it is due). At the 'end' of a month:
+ * after that month (a month's more interest; nothing after the due month).
+ */
+export function familyLoanOwed(l: FamilyLoan, month: string, at: 'during' | 'end' = 'during'): number {
+  const k = monthsBetween(l.startMonth, month) + (at === 'end' ? 1 : 0);
+  if (k < (at === 'end' ? 1 : 0) || k > l.months) return 0;
+  return l.principal + familyLoanInterest({ ...l, months: k });
+}
+
+/** Everything owed on loans in `month` as it starts: bank loans before that month's payment, loans from family. */
+export function debtNow(b: Pick<Budget, 'loans' | 'familyLoans'>, month: string): number {
+  return loanDebtNow(b.loans, month) + (b.familyLoans ?? []).reduce((s, l) => s + familyLoanOwed(l, month), 0);
+}
+
+/** Everything owed on loans at the end of `month`: after its bank payments and family repayments. */
+export function debtAtEnd(b: Pick<Budget, 'loans' | 'familyLoans'>, month: string): number {
+  return loanDebtNow(b.loans, shiftMonth(month, 1)) + (b.familyLoans ?? []).reduce((s, l) => s + familyLoanOwed(l, month, 'end'), 0);
 }
 
 // ---- bank loans (annuity, in periods) ----
@@ -465,6 +516,14 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   const mine = b.oneOffs.filter((o) => o.month === month);
   const extraInLines = mine.filter((o) => o.direction === 'in').map(oneOffLine);
   const extraOutLines = mine.filter((o) => o.direction === 'out').map(oneOffLine);
+  // Loans from family happen once: the money received (when it is not in the money on hand
+  // yet) and the one repayment of principal and interest at the end of the term.
+  for (const f of b.familyLoans ?? []) {
+    if (f.receive && f.startMonth === month) extraInLines.push({ source: 'loan', id: `${f.id}#receive`, name: `Nhận tiền vay: ${f.name}`, amount: f.principal });
+    if (familyLoanDueMonth(f) === month) {
+      extraOutLines.push({ source: 'loan', id: `${f.id}#due`, name: `Trả vay: ${f.name}`, amount: f.principal + familyLoanInterest(f), kind: 'debt' });
+    }
+  }
 
   // The card plan can be several items, each named by its note; outside it shows as one line:
   // the total, named by the notes joined with commas.

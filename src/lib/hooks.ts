@@ -10,10 +10,11 @@ export function useBudget(): { budget: Budget; credit: CreditData } {
   const overrides = useStore((s) => s.overrides);
   const instalments = useStore((s) => s.instalments);
   const loans = useStore((s) => s.loans);
+  const familyLoans = useStore((s) => s.familyLoans);
   const txs = useStore((s) => s.txs);
   const statementDay = useStore((s) => s.settings.statementDay);
   return useMemo(
-    () => ({ budget: { fixed, oneOffs, overrides, instalments, loans }, credit: { txs, statementDay } }),
-    [fixed, oneOffs, overrides, instalments, loans, txs, statementDay],
+    () => ({ budget: { fixed, oneOffs, overrides, instalments, loans, familyLoans }, credit: { txs, statementDay } }),
+    [fixed, oneOffs, overrides, instalments, loans, familyLoans, txs, statementDay],
   );
 }

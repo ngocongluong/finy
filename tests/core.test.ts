@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, creditCycle, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, creditCycle, debtAtEnd, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
-import type { FixedItem, Loan, OneOff, Tx } from '../src/lib/types';
+import type { FamilyLoan, FixedItem, Loan, OneOff, Tx } from '../src/lib/types';
 
 // Made-up household used as the fixture.
 const fixed: FixedItem[] = [
@@ -702,4 +702,32 @@ test("the end of a month: money expected, and what is still owed after that mont
   assert.deepEqual([money, debt, money - debt], [160_000_000, 90_000_000, 70_000_000]);
   // Before the month the money on hand was entered there is nothing to project from.
   assert.equal(projectedCash(b, cash, ['2026-10']).get('2026-10'), null);
+});
+
+test('a loan from family: nothing monthly, principal and simple interest paid in one go at the end', () => {
+  const fam: FamilyLoan = { id: 'f', name: 'Bố mẹ', principal: 500_000_000, startMonth: '2026-11', months: 24, ratePct: 6 };
+  assert.deepEqual([familyLoanDueMonth(fam), familyLoanInterest(fam)], ['2028-11', 60_000_000]);
+  // Owed: from the month it is received (principal) to the month it is due (everything), then nothing.
+  assert.deepEqual(
+    ['2026-10', '2026-11', '2026-12', '2027-11', '2028-11', '2028-12'].map((m) => familyLoanOwed(fam, m)),
+    [0, 500_000_000, 502_500_000, 530_000_000, 560_000_000, 0],
+  );
+  // At the end of a month: a month's more interest; nothing once paid back.
+  assert.deepEqual(['2026-10', '2026-11', '2028-10', '2028-11'].map((m) => familyLoanOwed(fam, m, 'end')), [0, 502_500_000, 560_000_000, 0]);
+  const b: Budget = { fixed: [], oneOffs: [], overrides: {}, familyLoans: [fam] };
+  // No monthly payment: the repayment is an expense of the due month only.
+  assert.deepEqual(['2026-12', '2027-06', '2028-10'].map((m) => monthFlow(b, m).expense), [0, 0, 0]);
+  const due = monthFlow(b, '2028-11');
+  assert.deepEqual([due.expense, due.expenseLines.map((l) => l.id)], [560_000_000, ['f#due']]);
+  assert.equal(monthFlow({ ...b, familyLoans: [{ ...fam, ratePct: 0 }] }, '2028-11').expense, 500_000_000);
+  // The money received counts as income only when it is not in the money on hand yet.
+  assert.equal(monthFlow(b, '2026-11').income, 0);
+  assert.equal(monthFlow({ ...b, familyLoans: [{ ...fam, receive: true }] }, '2026-11').income, 500_000_000);
+  // Debt: with the bank loans, now and at a month's end.
+  assert.deepEqual([debtNow(b, '2026-11'), debtAtEnd(b, '2028-10'), debtAtEnd(b, '2028-11')], [500_000_000, 560_000_000, 0]);
+  // The long-range plan starts from money on hand minus it, and pays it in one go.
+  const inp = resolvePlan({ ...DEFAULT_PLAN, monthlyIncome: 0, monthlyExpense: 0 }, b, [], '2026-11', { amount: 1_000_000_000 });
+  assert.equal(inp.startNetWorth, 500_000_000);
+  const d = inp.debts.find((x) => x.id === 'f')!;
+  assert.deepEqual([d.balance, d.monthlyPayment, d.schedule![23].payment, d.schedule![24].payment, d.schedule![24].balance], [500_000_000, 0, 0, 560_000_000, 0]);
 });

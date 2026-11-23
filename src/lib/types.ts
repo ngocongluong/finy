@@ -101,6 +101,26 @@ export interface Loan {
   periods: LoanPeriod[];
 }
 
+/**
+ * Money borrowed from family or friends. Nothing is paid monthly: the
+ * principal, plus simple interest for the whole term when there is interest,
+ * is paid back in one go at the end of the term.
+ */
+export interface FamilyLoan {
+  id: string;
+  name: string;
+  /** Amount borrowed, VND. */
+  principal: number;
+  /** Month (YYYY-MM) the money is received. */
+  startMonth: string;
+  /** Term in months; the repayment falls this many months after startMonth. */
+  months: number;
+  /** Annual interest, percent, simple; 0 = no interest. */
+  ratePct: number;
+  /** Count the money received as income in startMonth (it is not in the money on hand yet). */
+  receive?: boolean;
+}
+
 /** A purchase paid off on the credit card in equal monthly parts. */
 export interface Instalment {
   id: string;

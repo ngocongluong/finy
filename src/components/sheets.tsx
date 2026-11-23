@@ -2,10 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Pressable, Switch, Text, View } from 'react-native';
-import { creditCycle, fixedBase, fixedPeriodAt, fixedPeriodsAmountAt, instalmentAmount, loanBalance, loanFinalMonth, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
+import { creditCycle, familyLoanDueMonth, familyLoanInterest, fixedBase, fixedPeriodAt, fixedPeriodsAmountAt, instalmentAmount, loanBalance, loanFinalMonth, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeFamilyLoan, normalizeLoan } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, FixedItem, FixedPeriod, Instalment, Loan, OneOff, Tx } from '../lib/types';
+import type { Account, AccountKind, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -949,11 +949,34 @@ interface DraftPeriod {
  * and is dropped when that period's terms change. The term is set only at the
  * top: the last period always runs to its end.
  */
-export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClose: () => void; item?: Loan | null }) {
+export function LoanSheet({
+  visible,
+  onClose,
+  item,
+  familyItem,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  /** A bank loan to edit. */
+  item?: Loan | null;
+  /** A loan from family to edit. Neither: a new loan of either kind. */
+  familyItem?: FamilyLoan | null;
+}) {
   const { c } = useUi();
   const money = useMoney();
   const upsert = useStore((s) => s.upsertLoan);
   const remove = useStore((s) => s.deleteLoan);
+  const upsertFamily = useStore((s) => s.upsertFamilyLoan);
+  const removeFamily = useStore((s) => s.deleteFamilyLoan);
+  const cashMonth = useStore((s) => s.cash?.month) ?? monthKey();
+  const [type, setType] = useState<'bank' | 'family'>('bank');
+  // A loan from family: received in a month, paid back in one go after the term.
+  const [famStart, setFamStart] = useState(monthKey());
+  const [termText, setTermText] = useState('12');
+  const [termUnit, setTermUnit] = useState<'month' | 'year'>('month');
+  const [withInterest, setWithInterest] = useState(false);
+  const [famRateText, setFamRateText] = useState('');
+  const [receive, setReceive] = useState(false);
   const [name, setName] = useState('');
   const [principal, setPrincipal] = useState(0);
   const [months, setMonths] = useState(360);
@@ -967,8 +990,18 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
   useEffect(() => {
     if (!visible) return;
     const l = item ? normalizeLoan(item) : null;
-    setName(l?.name ?? '');
-    setPrincipal(l?.principal ?? 0);
+    const f = familyItem ? normalizeFamilyLoan(familyItem) : null;
+    setType(f ? 'family' : 'bank');
+    setName(f?.name ?? l?.name ?? '');
+    setPrincipal(f?.principal ?? l?.principal ?? 0);
+    setFamStart(f?.startMonth ?? monthKey());
+    // A whole number of years shows in years.
+    const fm = f?.months ?? 12;
+    setTermUnit(fm % 12 === 0 ? 'year' : 'month');
+    setTermText(String(fm % 12 === 0 ? fm / 12 : fm));
+    setWithInterest(!!f && f.ratePct > 0);
+    setFamRateText(f && f.ratePct > 0 ? String(f.ratePct).replace('.', ',') : '');
+    setReceive(!!f?.receive);
     setMonths(l?.months ?? 360);
     setMonthsText(String(l?.months ?? 360));
     setStart(l?.startMonth ?? monthKey());
@@ -985,7 +1018,35 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
     );
     setNote(null);
     setKey((k) => k + 1);
-  }, [visible, item]);
+  }, [visible, item, familyItem]);
+
+  // ---- a loan from family ----
+  const termN = parseInt(termText, 10) || 0;
+  const famMonths = termUnit === 'year' ? termN * 12 : termN;
+  const famRate = withInterest ? parseFloat(famRateText.replace(',', '.')) : 0;
+  const famDraft: FamilyLoan = normalizeFamilyLoan({
+    id: familyItem?.id ?? 'draft',
+    name,
+    principal,
+    startMonth: famStart,
+    months: famMonths,
+    ratePct: Number.isFinite(famRate) ? famRate : 0,
+    receive,
+  });
+  const famValid =
+    name.trim().length > 0 && principal > 0 && famMonths >= 1 && famMonths <= 600 && (!withInterest || (Number.isFinite(famRate) && famRate > 0 && famRate <= 100));
+  const famInterest = familyLoanInterest(famDraft);
+  const famDue = familyLoanDueMonth(famDraft);
+  const saveFamily = () => {
+    upsertFamily({ ...famDraft, id: familyItem?.id });
+    onClose();
+  };
+  // Money received after the money on hand was entered is not in it yet: count it as income then.
+  const changeFamStart = (m: string) => {
+    setFamStart(m);
+    setReceive(m > cashMonth);
+  };
+  const editing = !!item || !!familyItem;
 
   const end = shiftMonth(start, months - 1);
   // Later periods that fall outside the term while it is being changed are kept aside
@@ -1072,13 +1133,14 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
     <Sheet
       visible={visible}
       onClose={onClose}
-      title={item ? 'Sửa khoản vay' : 'Thêm khoản vay ngân hàng'}
+      title={familyItem ? 'Sửa khoản vay người thân' : item ? 'Sửa khoản vay ngân hàng' : 'Thêm khoản vay'}
       footer={
         <Btn
           label="Lưu"
           icon="checkmark"
-          disabled={!valid}
+          disabled={type === 'family' ? !famValid : !valid}
           onPress={() => {
+            if (type === 'family') return saveFamily();
             // A payoff also records what it paid.
             const saved = draft.periods.map((p, i) => (p.payOff ? { ...p, prepayment: summary[i]?.prepayment ?? p.prepayment } : p));
             upsert({ id: item?.id, name, principal, months, startMonth: start, periods: saved });
@@ -1086,7 +1148,101 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
           }}
         />
       }>
-      <Field label="Tên khoản vay" value={name} onChangeText={setName} placeholder="Vay mua nhà, vay mua xe…" autoFocus={!item} />
+      {editing ? null : (
+        <Segmented
+          value={type}
+          onChange={setType}
+          options={[
+            { value: 'bank', label: 'Vay ngân hàng' },
+            { value: 'family', label: 'Vay người thân' },
+          ]}
+        />
+      )}
+      <Field
+        label="Tên khoản vay"
+        value={name}
+        onChangeText={setName}
+        placeholder={type === 'family' ? 'Vay bố mẹ, vay anh chị…' : 'Vay mua nhà, vay mua xe…'}
+        autoFocus={!editing}
+      />
+      {type === 'family' ? (
+        <>
+          <AmountField key={`f${key}`} label="Số tiền vay" value={principal} onChange={setPrincipal} />
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+            <MonthField label="Tháng nhận tiền" value={famStart} onChange={changeFamStart} />
+            {/* Follows the term: paid back the term after the money is received. */}
+            <MonthField label="Tháng trả gốc + lãi" value={famDue} readOnly />
+          </View>
+          <View style={{ gap: 8 }}>
+            <Txt v="label">Thời hạn vay</Txt>
+            <Segmented
+              value={termUnit}
+              onChange={setTermUnit}
+              options={[
+                { value: 'month', label: 'Tính theo tháng' },
+                { value: 'year', label: 'Tính theo năm' },
+              ]}
+            />
+            <Field
+              label={termUnit === 'year' ? 'Số năm' : 'Số tháng'}
+              value={termText}
+              keyboardType="number-pad"
+              onChangeText={(t) => setTermText(t.replace(/\D/g, '').slice(0, 3))}
+            />
+            <Txt v="small">
+              {famMonths >= 1 && famMonths <= 600 ? `${famMonths} tháng · trả một lần vào ${monthYear(famDue)}` : 'Thời hạn từ 1 tháng đến 50 năm.'}
+            </Txt>
+          </View>
+          <View style={{ gap: 8 }}>
+            <Txt v="label">Lãi</Txt>
+            <Segmented
+              value={withInterest ? 'yes' : 'no'}
+              onChange={(v) => setWithInterest(v === 'yes')}
+              options={[
+                { value: 'no', label: 'Không lãi' },
+                { value: 'yes', label: 'Có lãi' },
+              ]}
+            />
+            {withInterest ? (
+              <Field
+                label="Lãi suất (%/năm, lãi đơn)"
+                value={famRateText}
+                placeholder="5"
+                keyboardType="decimal-pad"
+                onChangeText={(t) => setFamRateText(t.replace(/[^0-9.,]/g, ''))}
+              />
+            ) : null}
+          </View>
+          {famValid ? (
+            <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 6 }}>
+              <Txt v="heading">Trả một lần vào {monthYear(famDue)}</Txt>
+              <Row>
+                <Txt v="small">Gốc</Txt>
+                <Txt v="small">{money(principal)}</Txt>
+              </Row>
+              <Row style={{ gap: 12 }}>
+                <Txt v="small" style={{ flex: 1 }}>
+                  {withInterest ? `Lãi ${famRateText}%/năm × ${famMonths % 12 === 0 ? `${famMonths / 12} năm` : `${famMonths} tháng`}` : 'Lãi'}
+                </Txt>
+                <Txt v="small">{money(famInterest)}</Txt>
+              </Row>
+              <View style={{ height: 1, backgroundColor: c.border }} />
+              <Row>
+                <Txt v="label">Tổng phải trả</Txt>
+                <Txt v="title">{money(principal + famInterest)}</Txt>
+              </Row>
+              <Txt v="small">Không trả hàng tháng: số này được tính vào chi của {monthYear(famDue)} trong bảng thu chi.</Txt>
+            </View>
+          ) : null}
+          <Toggle
+            label={`Tính tiền nhận được vào thu ${monthYear(famStart)}`}
+            hint={`Bật nếu số tiền này chưa có trong Tiền đang có (nhập ${monthYear(cashMonth)}), ví dụ khoản sẽ vay sau này.`}
+            value={receive}
+            onChange={setReceive}
+          />
+        </>
+      ) : (
+        <>
       <View style={{ gap: 8 }}>
         <Txt v="label">Thời hạn vay</Txt>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -1307,14 +1463,18 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
         </View>
       ) : null}
 
-      {item ? (
+        </>
+      )}
+
+      {item || familyItem ? (
         <Btn
           label="Xoá khoản vay"
           kind="danger"
           icon="trash-outline"
           onPress={() =>
-            confirmDelete(`khoản vay "${item.name}"`, () => {
-              remove(item.id);
+            confirmDelete(`khoản vay "${(familyItem ?? item)!.name}"`, () => {
+              if (familyItem) removeFamily(familyItem.id);
+              else if (item) remove(item.id);
               onClose();
             })
           }
@@ -1360,10 +1520,13 @@ export function CreditPlanSheet({ visible, onClose, month }: { visible: boolean;
   const nextKey = React.useRef(0);
 
   const newRow = (): PlanRow => ({ note: '', amount: 0, key: nextKey.current++, scope: 'all', from: month, to: shiftMonth(month, 5) });
+  // An item set for one other month belongs to that month alone: it is not shown here
+  // (it shows when that month is opened) and saving here leaves it as it is.
+  const otherMonthOnly = (f: FixedItem) => !!f.fromMonth && f.fromMonth === f.toMonth && f.fromMonth !== month;
 
   useEffect(() => {
     if (!visible) return;
-    const items = fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
+    const items = fixed.filter((f) => f.direction === 'out' && f.kind === 'credit' && !otherMonthOnly(f));
     const loaded = items.map((f): PlanRow => {
       const scope: PlanScope = !f.fromMonth && !f.toMonth ? 'all' : f.fromMonth === month && f.toMonth === month ? 'month' : 'range';
       return {
@@ -1399,7 +1562,7 @@ export function CreditPlanSheet({ visible, onClose, month }: { visible: boolean;
       const saved = upsertFixed({ id: r.id, name: r.note.trim(), amount: r.amount, direction: 'out', kind: 'credit', ...range });
       keep.add(saved.id);
     }
-    for (const f of fixed) if (f.direction === 'out' && f.kind === 'credit' && !keep.has(f.id)) deleteFixed(f.id);
+    for (const f of fixed) if (f.direction === 'out' && f.kind === 'credit' && !keep.has(f.id) && !otherMonthOnly(f)) deleteFixed(f.id);
     onClose();
   };
 

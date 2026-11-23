@@ -316,6 +316,7 @@ export function Field({
   secure,
   multiline,
   autoFocus,
+  keyboardType,
 }: {
   label: string;
   value: string;
@@ -324,6 +325,7 @@ export function Field({
   secure?: boolean;
   multiline?: boolean;
   autoFocus?: boolean;
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
 }) {
   const { c, r, fs } = useUi();
   return (
@@ -337,6 +339,7 @@ export function Field({
         secureTextEntry={secure}
         multiline={multiline}
         autoFocus={autoFocus}
+        keyboardType={keyboardType}
         autoCapitalize="sentences"
         style={{
           backgroundColor: c.cardAlt,

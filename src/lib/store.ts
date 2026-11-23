@@ -3,12 +3,12 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
-import { fixedBase, fixedPeriodsAmountAt, markCreditItem, migrateLegacyBudget, normalizeFixedPeriods, normalizeLoan } from './finance';
+import { fixedBase, fixedPeriodsAmountAt, markCreditItem, migrateLegacyBudget, normalizeFamilyLoan, normalizeFixedPeriods, normalizeLoan } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FamilyLoan, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
 
 /**
  * The address HSBC Vietnam sends card-transaction alerts from. Which senders
@@ -49,6 +49,8 @@ interface State {
   instalments: Instalment[];
   /** Bank loans. */
   loans: Loan[];
+  /** Loans from family: paid back in one go at the end. */
+  familyLoans: FamilyLoan[];
   /** Money the user has now (entered on the Budget tab). */
   cash: CashOnHand | null;
   accounts: Account[];
@@ -75,6 +77,8 @@ interface State {
   deleteInstalment: (id: string) => void;
   upsertLoan: (l: Omit<Loan, 'id'> & { id?: string }) => Loan;
   deleteLoan: (id: string) => void;
+  upsertFamilyLoan: (l: Omit<FamilyLoan, 'id'> & { id?: string }) => FamilyLoan;
+  deleteFamilyLoan: (id: string) => void;
   setCash: (amount: number | null) => void;
   /** Adds the same one-off to each of the given months. */
   addOneOffs: (months: string[], item: Omit<OneOff, 'id' | 'month'>) => OneOff[];
@@ -143,6 +147,7 @@ export const useStore = create<State>((set, get) => ({
   creditCard: null,
   instalments: [],
   loans: [],
+  familyLoans: [],
   cash: null,
   accounts: [],
   txs: [],
@@ -169,7 +174,7 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, creditCard, instalments, loans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
@@ -177,6 +182,7 @@ export const useStore = create<State>((set, get) => ({
         db.kvGet<CreditCardInfo>('creditCard'),
         db.kvGet<Instalment[]>('instalments'),
         db.kvGet<Loan[]>('loans'),
+        db.kvGet<FamilyLoan[]>('familyLoans'),
         db.kvGet<CashOnHand>('cash'),
         db.kvGet<boolean>('creditMarked'),
         db.kvGet<Record<string, MonthBudget>>('budgets'),
@@ -208,6 +214,7 @@ export const useStore = create<State>((set, get) => ({
         instalments: instalments ?? [],
         // Loans saved by older versions had one rate on the loan itself: convert to periods.
         loans: (loans ?? []).map(normalizeLoan),
+        familyLoans: (familyLoans ?? []).map(normalizeFamilyLoan),
         cash: cash ?? null,
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
@@ -340,6 +347,21 @@ export const useStore = create<State>((set, get) => ({
     const loans = get().loans.filter((x) => x.id !== id);
     set({ loans });
     persist('loans', loans);
+  },
+
+  upsertFamilyLoan: (l) => {
+    const full = normalizeFamilyLoan({ ...l, id: l.id ?? uid(), name: l.name.trim() });
+    const cur = get().familyLoans;
+    const familyLoans = cur.some((x) => x.id === full.id) ? cur.map((x) => (x.id === full.id ? full : x)) : [...cur, full];
+    set({ familyLoans });
+    persist('familyLoans', familyLoans);
+    return full;
+  },
+
+  deleteFamilyLoan: (id) => {
+    const familyLoans = get().familyLoans.filter((x) => x.id !== id);
+    set({ familyLoans });
+    persist('familyLoans', familyLoans);
   },
 
   deleteInstalment: (id) => {
@@ -482,6 +504,7 @@ export const useStore = create<State>((set, get) => ({
       creditCard: null,
       instalments: [],
       loans: [],
+      familyLoans: [],
       cash: null,
       accounts: [],
       txs: [],
@@ -495,6 +518,7 @@ export const useStore = create<State>((set, get) => ({
     persist('oneOffs', []);
     persist('instalments', []);
     persist('loans', []);
+    persist('familyLoans', []);
     persist('cash', null);
     persist('creditMarked', true);
     persist('accounts', []);

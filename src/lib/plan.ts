@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { fixedActive, fixedBase, loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
+import { debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedActive, fixedBase, loanBalance, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -72,6 +72,24 @@ export function resolvePlan(
             }),
           }),
         ),
+    )
+    // Loans from family: nothing monthly, the principal and interest in one payment at the end.
+    .concat(
+      (budget.familyLoans ?? [])
+        .filter((l) => familyLoanDueMonth(l) >= currentMonth)
+        .map(
+          (l): PlanDebt => ({
+            id: l.id,
+            name: l.name,
+            balance: familyLoanOwed(l, currentMonth),
+            ratePct: l.ratePct,
+            monthlyPayment: 0,
+            schedule: Array.from({ length: years * 12 }, (_, i) => {
+              const m = shiftMonth(currentMonth, i);
+              return { payment: m === familyLoanDueMonth(l) ? l.principal + familyLoanInterest(l) : 0, balance: familyLoanOwed(l, m, 'end') };
+            }),
+          }),
+        ),
     );
 
   const extraByMonth: Record<number, number> = {};
@@ -84,6 +102,8 @@ export function resolvePlan(
     extraByMonth[index] = (extraByMonth[index] ?? 0) + net;
   };
   for (const o of oneOffs) add(o.month, o.direction === 'in' ? o.amount : -o.amount);
+  // Money from family still to come in (its repayment is in the debts above).
+  for (const l of budget.familyLoans ?? []) if (l.receive) add(l.startMonth, l.principal);
   // Fixed items whose amount changes over time (periods, or limited to some months):
   // the base month includes what applies now; other months differ by the change.
   for (const f of fixed) {
@@ -107,8 +127,8 @@ export function resolvePlan(
 
   return {
     years,
-    // Accounts when the user keeps them; otherwise money on hand minus what is owed on bank loans.
-    startNetWorth: plan.startNetWorth ?? (accounts.length || !cash ? netWorth(accounts) : cash.amount - loanDebtNow(budget.loans, currentMonth)),
+    // Accounts when the user keeps them; otherwise money on hand minus what is owed on all loans.
+    startNetWorth: plan.startNetWorth ?? (accounts.length || !cash ? netWorth(accounts) : cash.amount - debtNow(budget, currentMonth)),
     monthlyIncome: plan.monthlyIncome ?? base.fixedIn,
     monthlyExpense: plan.monthlyExpense ?? base.fixedOut - base.debtPayment,
     incomeGrowthPct: plan.incomeGrowthPct,

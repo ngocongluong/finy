@@ -6,11 +6,11 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, periodLabel, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, fixedPeriodAt, loanDebtNow, monthFlow, projectedCash, type Line } from '../../lib/finance';
+import { creditCycle, debtAtEnd, fixedPeriodAt, monthFlow, projectedCash, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
-import type { FixedItem, Loan, OneOff, Tx } from '../../lib/types';
+import type { FamilyLoan, FixedItem, Loan, OneOff, Tx } from '../../lib/types';
 
 const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
 
@@ -34,7 +34,7 @@ export default function MonthDetail() {
   const [fixedEdit, setFixedEdit] = useState<{ open: boolean; item: FixedItem | null }>({ open: false, item: null });
   const [oneOff, setOneOff] = useState<{ open: boolean; item: OneOff | null; direction: 'in' | 'out' }>({ open: false, item: null, direction: 'out' });
   const [creditSetup, setCreditSetup] = useState(false);
-  const [loanEdit, setLoanEdit] = useState<{ open: boolean; item: Loan | null }>({ open: false, item: null });
+  const [loanEdit, setLoanEdit] = useState<{ open: boolean; item: Loan | null; family?: FamilyLoan | null }>({ open: false, item: null });
   const [tx, setTx] = useState<Tx | undefined>(undefined);
 
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
@@ -44,7 +44,7 @@ export default function MonthDetail() {
   const position = useMemo(
     () => ({
       money: projectedCash(budget, cash, [month], credit).get(month) ?? null,
-      debt: loanDebtNow(budget.loans, shiftMonth(month, 1)),
+      debt: debtAtEnd(budget, month),
     }),
     [budget, cash, credit, month],
   );
@@ -65,9 +65,11 @@ export default function MonthDetail() {
       const item = budget.fixed.find((f) => f.id === l.id);
       if (item) setFixedEdit({ open: true, item });
     } else if (l.source === 'loan') {
-      // A prepayment line carries the loan's id with a suffix.
-      const item = (budget.loans ?? []).find((x) => x.id === l.id.split('#')[0]);
-      if (item) setLoanEdit({ open: true, item });
+      // Prepayment and family-loan lines carry the loan's id with a suffix.
+      const id = l.id.split('#')[0];
+      const item = (budget.loans ?? []).find((x) => x.id === id);
+      const family = (budget.familyLoans ?? []).find((x) => x.id === id);
+      if (item || family) setLoanEdit({ open: true, item: item ?? null, family: family ?? null });
     } else {
       const item = budget.oneOffs.find((o) => o.id === l.id);
       if (item) setOneOff({ open: true, item, direction: item.direction });
@@ -81,6 +83,24 @@ export default function MonthDetail() {
     return p ? periodLabel(p) : null;
   };
 
+  // What a line is, shown under its name.
+  const lineSub = (l: Line): string => {
+    if (l.source === 'oneoff') return 'Phát sinh';
+    if (l.source === 'loan') {
+      if (l.id.endsWith('#due')) return 'Vay người thân · trả một lần gốc + lãi';
+      if (l.id.endsWith('#receive')) return 'Vay người thân · tiền nhận được';
+      if (l.id.endsWith('#payoff')) return 'Trả hết dư nợ · kết thúc khoản vay';
+      if (l.id.endsWith('#prepay')) return 'Trả trước khoản vay · đầu giai đoạn mới';
+      return 'Vay ngân hàng · trả góp đều';
+    }
+    if (l.overridden) return `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`;
+    const period = periodOf(l);
+    if (period) return `Cố định · giai đoạn ${period}`;
+    if (l.kind === 'debt') return 'Cố định · trả nợ vay';
+    if (l.daily) return 'Cố định · quỹ chi tiêu hằng ngày';
+    return 'Cố định';
+  };
+
   const renderLine = (l: Line, positive?: boolean) => (
     <Pressable
       key={`${l.source}-${l.id}`}
@@ -90,23 +110,7 @@ export default function MonthDetail() {
         <View style={{ flex: 1, marginRight: 12 }}>
           <Txt numberOfLines={1}>{l.name}</Txt>
           <Txt v="small" color={l.overridden ? c.accent : c.muted}>
-            {l.source === 'oneoff'
-              ? 'Phát sinh'
-              : l.source === 'loan'
-                ? l.id.endsWith('#payoff')
-                  ? 'Trả hết dư nợ · kết thúc khoản vay'
-                  : l.id.endsWith('#prepay')
-                    ? 'Trả trước khoản vay · đầu giai đoạn mới'
-                    : 'Vay ngân hàng · trả góp đều'
-              : l.overridden
-                ? `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`
-                : periodOf(l)
-                  ? `Cố định · giai đoạn ${periodOf(l)}`
-                  : l.kind === 'debt'
-                  ? 'Cố định · trả nợ vay'
-                  : l.daily
-                    ? 'Cố định · quỹ chi tiêu hằng ngày'
-                    : 'Cố định'}
+            {lineSub(l)}
           </Txt>
         </View>
         <Amount value={l.amount} color={positive ? c.positive : c.text} />
@@ -165,7 +169,7 @@ export default function MonthDetail() {
         <Row style={{ gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Txt v="label">Còn nợ</Txt>
-            <Txt v="small">{budget.loans?.length ? 'dư nợ vay ngân hàng sau kỳ trả tháng này' : 'chưa có khoản vay ngân hàng'}</Txt>
+            <Txt v="small">{budget.loans?.length || budget.familyLoans?.length ? 'dư nợ các khoản vay cuối tháng' : 'chưa có khoản vay'}</Txt>
           </View>
           <Amount v="heading" value={position.debt} color={position.debt > 0 ? c.negative : c.text} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
         </Row>
@@ -298,7 +302,7 @@ export default function MonthDetail() {
         defaultDirection={oneOff.direction}
       />
       <CreditPlanSheet visible={creditSetup} onClose={() => setCreditSetup(false)} month={month} />
-      <LoanSheet visible={loanEdit.open} onClose={() => setLoanEdit((v) => ({ ...v, open: false }))} item={loanEdit.item} />
+      <LoanSheet visible={loanEdit.open} onClose={() => setLoanEdit((v) => ({ ...v, open: false }))} item={loanEdit.item} familyItem={loanEdit.family ?? null} />
       <TxSheet visible={tx !== undefined} onClose={() => setTx(undefined)} tx={tx} />
     </Screen>
   );
