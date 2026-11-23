@@ -1,6 +1,7 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { monthSummary, netWorth } from './finance';
-import type { Account, MonthBudget, PlanDebt, PlanGoal, PlanParams } from './types';
+import { monthFlow, netWorth } from './finance';
+import { shiftMonth } from './format';
+import type { Account, FixedItem, OneOff, PlanDebt, PlanGoal, PlanParams } from './types';
 
 export const DEFAULT_PLAN: PlanParams = {
   years: 10,
@@ -25,23 +26,52 @@ export interface PlanInputs {
   returnPct: number;
   debts: PlanDebt[];
   goals: PlanGoal[];
+  /**
+   * Net one-off cash flow (income - expense) by simulation month, where 1 is
+   * the current month. Comes from the one-offs entered in the cash-flow table.
+   */
+  extraByMonth?: Record<number, number>;
 }
 
-export function resolvePlan(plan: PlanParams, budget: MonthBudget | undefined, accounts: Account[]): PlanInputs {
-  const s = monthSummary(budget);
-  const budgetDebts: PlanDebt[] = (budget?.items ?? [])
-    .filter((i) => i.kind === 'debt' && i.amount > 0)
-    .map((i) => ({ id: i.id, name: i.name, balance: null, ratePct: 0, monthlyPayment: i.amount }));
+/**
+ * Fills in the plan's "follow my budget" placeholders from the cash-flow data:
+ * fixed incomes, fixed expenses, loan repayments, and the one-offs that fall
+ * inside the horizon.
+ */
+export function resolvePlan(
+  plan: PlanParams,
+  fixed: FixedItem[],
+  oneOffs: OneOff[],
+  accounts: Account[],
+  currentMonth: string,
+): PlanInputs {
+  const base = monthFlow(fixed, [], currentMonth);
+  const fixedDebts: PlanDebt[] = fixed
+    .filter((f) => f.direction === 'out' && f.kind === 'debt' && f.amount > 0)
+    .map((f) => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }));
+  const years = Math.min(10, Math.max(5, Math.round(plan.years)));
+
+  const extraByMonth: Record<number, number> = {};
+  const lastMonth = shiftMonth(currentMonth, years * 12 - 1);
+  for (const o of oneOffs) {
+    if (o.month < currentMonth || o.month > lastMonth) continue;
+    const [y0, m0] = currentMonth.split('-').map(Number);
+    const [y1, m1] = o.month.split('-').map(Number);
+    const index = (y1 - y0) * 12 + (m1 - m0) + 1;
+    extraByMonth[index] = (extraByMonth[index] ?? 0) + (o.direction === 'in' ? o.amount : -o.amount);
+  }
+
   return {
-    years: Math.min(10, Math.max(5, Math.round(plan.years))),
+    years,
     startNetWorth: plan.startNetWorth ?? netWorth(accounts),
-    monthlyIncome: plan.monthlyIncome ?? s.income,
-    monthlyExpense: plan.monthlyExpense ?? s.expense,
+    monthlyIncome: plan.monthlyIncome ?? base.fixedIn,
+    monthlyExpense: plan.monthlyExpense ?? base.fixedOut - base.debtPayment,
     incomeGrowthPct: plan.incomeGrowthPct,
     inflationPct: plan.inflationPct,
     returnPct: plan.returnPct,
-    debts: plan.debts ?? budgetDebts,
+    debts: plan.debts ?? fixedDebts,
     goals: plan.goals,
+    extraByMonth,
   };
 }
 
@@ -114,7 +144,7 @@ export function project(inp: PlanInputs): Projection {
     }
     if (hadKnownDebt && debtFreeMonth === null && knownDebt() === 0) debtFreeMonth = m;
 
-    const saved = income - expense - debtPaid;
+    const saved = income - expense - debtPaid + (inp.extraByMonth?.[m] ?? 0);
     assets = assets * (1 + (assets > 0 ? rMonthly : 0)) + saved;
     savedThisYear += saved;
 

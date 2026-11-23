@@ -1,10 +1,10 @@
 // Add / edit forms, shared by several screens.
 import React, { useEffect, useState } from 'react';
 import { Alert, Switch, View } from 'react-native';
-import { dateKey, dayLabel } from '../lib/format';
+import { dateKey, dayLabel, monthKey, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, BudgetItem, BudgetKind, Tx } from '../lib/types';
-import { AmountField, Btn, Field, IconBtn, Row, Segmented, Sheet, Txt, useUi } from './ui';
+import type { Account, AccountKind, FixedItem, OneOff, Tx } from '../lib/types';
+import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
   const { c } = useUi();
@@ -104,18 +104,23 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
   );
 }
 
-const KIND_OPTIONS: { value: BudgetKind; label: string }[] = [
-  { value: 'expense', label: 'Chi tiêu' },
-  { value: 'debt', label: 'Trả nợ' },
-  { value: 'saving', label: 'Để dành' },
-];
-
-export function ItemSheet({ visible, onClose, month, item }: { visible: boolean; onClose: () => void; month: string; item?: BudgetItem | null }) {
-  const upsertItem = useStore((s) => s.upsertItem);
-  const deleteItem = useStore((s) => s.deleteItem);
+/** Add or edit an income or expense that repeats every month. */
+export function FixedSheet({
+  visible,
+  onClose,
+  direction,
+  item,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  direction: 'in' | 'out';
+  item?: FixedItem | null;
+}) {
+  const upsertFixed = useStore((s) => s.upsertFixed);
+  const deleteFixed = useStore((s) => s.deleteFixed);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState(0);
-  const [kind, setKind] = useState<BudgetKind>('expense');
+  const [kind, setKind] = useState<'expense' | 'debt'>('expense');
   const [daily, setDaily] = useState(false);
   const [key, setKey] = useState(0);
 
@@ -128,36 +133,147 @@ export function ItemSheet({ visible, onClose, month, item }: { visible: boolean;
     setKey((k) => k + 1);
   }, [visible, item]);
 
+  const out = direction === 'out';
+  const what = out ? 'chi cố định' : 'thu cố định';
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
-      title={item ? 'Sửa mục' : 'Thêm mục'}
+      title={item ? `Sửa khoản ${what}` : `Thêm khoản ${what}`}
       footer={
         <Btn
           label="Lưu"
           icon="checkmark"
-          disabled={!name.trim()}
+          disabled={!name.trim() || !(amount > 0)}
           onPress={() => {
-            upsertItem(month, { id: item?.id, name, amount, kind, daily: kind === 'expense' && daily });
+            upsertFixed({ id: item?.id, name, amount, direction, kind: out ? kind : undefined, daily: out && kind === 'expense' && daily });
             onClose();
           }}
         />
       }>
-      <Field label="Tên mục" value={name} onChangeText={setName} placeholder="Điện nước, học phí…" autoFocus={!item} />
+      <Field label="Tên" value={name} onChangeText={setName} placeholder={out ? 'Tiền nhà, điện nước, học phí…' : 'Lương, cho thuê nhà…'} autoFocus={!item} />
       <AmountField key={key} label="Số tiền mỗi tháng" value={amount} onChange={setAmount} />
-      <Segmented value={kind} onChange={setKind} options={KIND_OPTIONS} />
-      {kind === 'expense' ? (
+      {out ? (
+        <Segmented
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: 'expense', label: 'Chi tiêu' },
+            { value: 'debt', label: 'Trả nợ vay' },
+          ]}
+        />
+      ) : null}
+      {out && kind === 'expense' ? (
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
       ) : null}
       {item ? (
         <Btn
-          label="Xoá mục"
+          label="Xoá khoản này"
           kind="danger"
           icon="trash-outline"
           onPress={() =>
-            confirmDelete(`mục "${item.name}"`, () => {
-              deleteItem(month, item.id);
+            confirmDelete(`khoản "${item.name}"`, () => {
+              deleteFixed(item.id);
+              onClose();
+            })
+          }
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
+/**
+ * Add or edit an expected one-off income or expense.
+ * Adding: pick one or several months and the same entry is created in each.
+ * Editing: one entry, which can be moved to another month.
+ */
+export function OneOffSheet({
+  visible,
+  onClose,
+  item,
+  defaultMonth,
+  defaultDirection = 'out',
+}: {
+  visible: boolean;
+  onClose: () => void;
+  item?: OneOff | null;
+  defaultMonth: string;
+  defaultDirection?: 'in' | 'out';
+}) {
+  const addOneOffs = useStore((s) => s.addOneOffs);
+  const updateOneOff = useStore((s) => s.updateOneOff);
+  const deleteOneOff = useStore((s) => s.deleteOneOff);
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState(0);
+  const [direction, setDirection] = useState<'in' | 'out'>('out');
+  const [months, setMonths] = useState<string[]>([]);
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    setName(item?.name ?? '');
+    setAmount(item?.amount ?? 0);
+    setDirection(item?.direction ?? defaultDirection);
+    setMonths([item?.month ?? defaultMonth]);
+    setKey((k) => k + 1);
+  }, [visible, item, defaultMonth, defaultDirection]);
+
+  // The next 24 months, plus the entry's own month when it lies outside that range.
+  const now = monthKey();
+  const choices = Array.from({ length: 24 }, (_, i) => shiftMonth(now, i));
+  for (const m of [item?.month, defaultMonth]) if (m && !choices.includes(m)) choices.unshift(m);
+  choices.sort();
+
+  const toggle = (m: string) => {
+    if (item) setMonths([m]);
+    else setMonths((cur) => (cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].sort()));
+  };
+
+  const valid = name.trim() && amount > 0 && months.length > 0;
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={item ? 'Sửa khoản phát sinh' : 'Thêm khoản phát sinh'}
+      footer={
+        <Btn
+          label={item || months.length <= 1 ? 'Lưu' : `Lưu cho ${months.length} tháng`}
+          icon="checkmark"
+          disabled={!valid}
+          onPress={() => {
+            if (item) updateOneOff({ ...item, name, amount, direction, month: months[0] });
+            else addOneOffs(months, { name, amount, direction });
+            onClose();
+          }}
+        />
+      }>
+      <Segmented
+        value={direction}
+        onChange={setDirection}
+        options={[
+          { value: 'out', label: 'Chi phát sinh' },
+          { value: 'in', label: 'Thu phát sinh' },
+        ]}
+      />
+      <Field label="Tên" value={name} onChangeText={setName} placeholder={direction === 'out' ? 'Học phí kỳ 2, sửa xe, du lịch…' : 'Thưởng Tết, tiền lãi…'} autoFocus={!item} />
+      <AmountField key={key} label={months.length > 1 ? 'Số tiền mỗi tháng đã chọn' : 'Số tiền'} value={amount} onChange={setAmount} />
+      <View style={{ gap: 8 }}>
+        <Txt v="label">{item ? 'Tháng' : 'Tháng áp dụng (chọn được nhiều tháng)'}</Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {choices.map((m) => (
+            <Chip key={m} label={monthShort(m)} active={months.includes(m)} onPress={() => toggle(m)} />
+          ))}
+        </View>
+      </View>
+      {item ? (
+        <Btn
+          label="Xoá khoản này"
+          kind="danger"
+          icon="trash-outline"
+          onPress={() =>
+            confirmDelete(`khoản "${item.name}"`, () => {
+              deleteOneOff(item.id);
               onClose();
             })
           }

@@ -83,6 +83,12 @@ export function monthLabel(month: string): string {
   return `Tháng ${m}/${y}`;
 }
 
+/** Compact month label for table rows: "T11/26". */
+export function monthShort(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return `T${m}/${String(y).slice(2)}`;
+}
+
 const WEEKDAYS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 
 export function dayLabel(date: string, today: string = dateKey()): string {

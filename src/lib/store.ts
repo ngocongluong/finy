@@ -3,11 +3,12 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
+import { migrateLegacyBudget } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, BudgetItem, ChatMsg, MonthBudget, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, ChatMsg, FixedItem, MonthBudget, OneOff, PlanParams, Seed, Tx, UiConfig } from './types';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoLockSec: 0,
@@ -26,7 +27,10 @@ interface State {
   hideAmounts: boolean;
   ui: UiConfig;
   uiHistory: UiConfig[];
-  budgets: Record<string, MonthBudget>;
+  /** Incomes and expenses that repeat every month. */
+  fixed: FixedItem[];
+  /** Expected one-off incomes and expenses, each tied to a month. */
+  oneOffs: OneOff[];
   accounts: Account[];
   txs: Tx[];
   plan: PlanParams;
@@ -42,10 +46,12 @@ interface State {
   lock: () => void;
   toggleHide: () => void;
 
-  ensureMonth: (month: string) => void;
-  setIncome: (month: string, income: number) => void;
-  upsertItem: (month: string, item: Omit<BudgetItem, 'id'> & { id?: string }) => BudgetItem;
-  deleteItem: (month: string, id: string) => void;
+  upsertFixed: (item: Omit<FixedItem, 'id'> & { id?: string }) => FixedItem;
+  deleteFixed: (id: string) => void;
+  /** Adds the same one-off to each of the given months. */
+  addOneOffs: (months: string[], item: Omit<OneOff, 'id' | 'month'>) => OneOff[];
+  updateOneOff: (item: OneOff) => void;
+  deleteOneOff: (id: string) => void;
 
   upsertAccount: (a: Omit<Account, 'id'> & { id?: string }) => Account;
   deleteAccount: (id: string) => void;
@@ -70,14 +76,21 @@ function persist(key: string, value: unknown) {
   db.kvSet(key, value).catch((e) => console.warn(`Failed to save ${key}`, e));
 }
 
-function seedData(): { budgets: Record<string, MonthBudget>; accounts: Account[] } {
+function seedData(): { fixed: FixedItem[]; oneOffs: OneOff[]; accounts: Account[] } {
   const seed = (Constants.expoConfig?.extra?.seed ?? null) as Seed | null;
-  const month = monthKey();
-  const items: BudgetItem[] = (seed?.month?.items ?? []).map((i) => ({ ...i, id: uid() }));
   return {
-    budgets: { [month]: { month, income: seed?.month?.income ?? 0, items } },
+    fixed: (seed?.fixed ?? []).map((f) => ({ ...f, id: uid() })),
+    oneOffs: (seed?.oneOffs ?? []).map((o) => ({ ...o, id: uid() })),
     accounts: (seed?.accounts ?? []).map((a) => ({ ...a, id: uid() })),
   };
+}
+
+/** Data saved by app versions that kept one budget per month: use the current (or latest) month. */
+function fromLegacyBudgets(budgets: Record<string, MonthBudget>): FixedItem[] {
+  const months = Object.keys(budgets).sort();
+  if (!months.length) return [];
+  const pick = budgets[monthKey()] ?? budgets[months[months.length - 1]];
+  return migrateLegacyBudget(pick);
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -86,7 +99,8 @@ export const useStore = create<State>((set, get) => ({
   hideAmounts: false,
   ui: DEFAULT_UI,
   uiHistory: [],
-  budgets: {},
+  fixed: [],
+  oneOffs: [],
   accounts: [],
   txs: [],
   plan: DEFAULT_PLAN,
@@ -102,8 +116,10 @@ export const useStore = create<State>((set, get) => ({
   unlock: async () => {
     if (!get().loaded) {
       await db.openDb(await getDbKey());
-      const [ui, budgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
+        db.kvGet<FixedItem[]>('fixed'),
+        db.kvGet<OneOff[]>('oneOffs'),
         db.kvGet<Record<string, MonthBudget>>('budgets'),
         db.kvGet<Account[]>('accounts'),
         db.kvGet<PlanParams>('plan'),
@@ -112,13 +128,17 @@ export const useStore = create<State>((set, get) => ({
         db.kvGet<unknown[]>('apiHistory'),
         db.txAll(),
       ]);
-      const firstRun = budgets === null;
+      // Three starting points: this model's own data, data from the older
+      // per-month budget model (converted once; the old rows are left in place), or a first run.
+      const firstRun = fixed === null && legacyBudgets === null;
       const seeded = firstRun ? seedData() : null;
+      const migrated = fixed === null && legacyBudgets !== null ? fromLegacyBudgets(legacyBudgets) : null;
       const mergedSettings = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
       set({
         loaded: true,
         ui: normalizeUi(ui),
-        budgets: budgets ?? seeded!.budgets,
+        fixed: fixed ?? migrated ?? seeded?.fixed ?? [],
+        oneOffs: oneOffs ?? seeded?.oneOffs ?? [],
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
         settings: mergedSettings,
@@ -127,11 +147,9 @@ export const useStore = create<State>((set, get) => ({
         txs,
         hideAmounts: mergedSettings.hideAmountsOnOpen,
       });
-      if (seeded) {
-        persist('budgets', seeded.budgets);
-        persist('accounts', seeded.accounts);
-      }
-      get().ensureMonth(monthKey());
+      if (fixed === null) persist('fixed', get().fixed);
+      if (oneOffs === null) persist('oneOffs', get().oneOffs);
+      if (seeded) persist('accounts', seeded.accounts);
     } else if (get().settings.hideAmountsOnOpen) {
       set({ hideAmounts: true });
     }
@@ -144,59 +162,56 @@ export const useStore = create<State>((set, get) => ({
 
   toggleHide: () => set({ hideAmounts: !get().hideAmounts }),
 
-  ensureMonth: (month) => {
-    const { budgets } = get();
-    if (budgets[month]) return;
-    // A new month starts as a copy of the closest earlier month.
-    const earlier = Object.keys(budgets)
-      .filter((m) => m < month)
-      .sort();
-    const src = earlier.length ? budgets[earlier[earlier.length - 1]] : undefined;
-    const next = {
-      ...budgets,
-      [month]: { month, income: src?.income ?? 0, items: (src?.items ?? []).map((i) => ({ ...i })) },
-    };
-    set({ budgets: next });
-    persist('budgets', next);
-  },
-
-  setIncome: (month, income) => {
-    get().ensureMonth(month);
-    const budgets = { ...get().budgets };
-    budgets[month] = { ...budgets[month], income: Math.max(0, Math.round(income)) };
-    set({ budgets });
-    persist('budgets', budgets);
-  },
-
-  upsertItem: (month, item) => {
-    get().ensureMonth(month);
-    const budgets = { ...get().budgets };
-    const cur = budgets[month];
-    const full: BudgetItem = {
+  upsertFixed: (item) => {
+    const out = item.direction === 'out';
+    const full: FixedItem = {
       id: item.id ?? uid(),
       name: item.name.trim(),
       amount: Math.max(0, Math.round(item.amount)),
-      kind: item.kind,
-      daily: item.daily || undefined,
+      direction: item.direction,
+      kind: out ? (item.kind ?? 'expense') : undefined,
+      daily: out && item.daily ? true : undefined,
     };
-    let items = cur.items.some((i) => i.id === full.id)
-      ? cur.items.map((i) => (i.id === full.id ? full : i))
-      : [...cur.items, full];
-    // Only one item can be the daily-spending bucket.
-    if (full.daily) items = items.map((i) => (i.id === full.id ? i : { ...i, daily: undefined }));
-    budgets[month] = { ...cur, items };
-    set({ budgets });
-    persist('budgets', budgets);
+    const cur = get().fixed;
+    let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];
+    // Only one expense can be the daily-spending bucket.
+    if (full.daily) fixed = fixed.map((f) => (f.id === full.id ? f : { ...f, daily: undefined }));
+    set({ fixed });
+    persist('fixed', fixed);
     return full;
   },
 
-  deleteItem: (month, id) => {
-    const budgets = { ...get().budgets };
-    const cur = budgets[month];
-    if (!cur) return;
-    budgets[month] = { ...cur, items: cur.items.filter((i) => i.id !== id) };
-    set({ budgets });
-    persist('budgets', budgets);
+  deleteFixed: (id) => {
+    const fixed = get().fixed.filter((f) => f.id !== id);
+    set({ fixed });
+    persist('fixed', fixed);
+  },
+
+  addOneOffs: (months, item) => {
+    const added: OneOff[] = [...new Set(months)].map((month) => ({
+      id: uid(),
+      month,
+      name: item.name.trim(),
+      amount: Math.max(0, Math.round(item.amount)),
+      direction: item.direction,
+    }));
+    const oneOffs = [...get().oneOffs, ...added];
+    set({ oneOffs });
+    persist('oneOffs', oneOffs);
+    return added;
+  },
+
+  updateOneOff: (item) => {
+    const full: OneOff = { ...item, name: item.name.trim(), amount: Math.max(0, Math.round(item.amount)) };
+    const oneOffs = get().oneOffs.map((o) => (o.id === full.id ? full : o));
+    set({ oneOffs });
+    persist('oneOffs', oneOffs);
+  },
+
+  deleteOneOff: (id) => {
+    const oneOffs = get().oneOffs.filter((o) => o.id !== id);
+    set({ oneOffs });
+    persist('oneOffs', oneOffs);
   },
 
   upsertAccount: (a) => {
@@ -297,11 +312,11 @@ export const useStore = create<State>((set, get) => ({
 
   wipe: async () => {
     await db.wipeAll();
-    const month = monthKey();
     set({
       ui: DEFAULT_UI,
       uiHistory: [],
-      budgets: { [month]: { month, income: 0, items: [] } },
+      fixed: [],
+      oneOffs: [],
       accounts: [],
       txs: [],
       plan: DEFAULT_PLAN,
@@ -309,6 +324,9 @@ export const useStore = create<State>((set, get) => ({
       chat: [],
       apiHistory: [],
     });
-    persist('budgets', get().budgets);
+    // Written explicitly so the next launch does not treat this as a first run and re-seed.
+    persist('fixed', []);
+    persist('oneOffs', []);
+    persist('accounts', []);
   },
 }));

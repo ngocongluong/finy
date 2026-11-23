@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { SpendBars, Sparkline } from '../../components/charts';
 import { TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
-import { dailySeries, dailyStats, monthSummary, netWorth } from '../../lib/finance';
+import { dailySeries, dailyStats, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, fmtPct, monthKey, monthLabel } from '../../lib/format';
 import { project, resolvePlan } from '../../lib/plan';
 import { useStore } from '../../lib/store';
@@ -15,7 +15,8 @@ export default function Home() {
   const { c, gap } = useUi();
   const money = useMoney();
   const ui = useStore((s) => s.ui);
-  const budgets = useStore((s) => s.budgets);
+  const fixed = useStore((s) => s.fixed);
+  const oneOffs = useStore((s) => s.oneOffs);
   const accounts = useStore((s) => s.accounts);
   const txs = useStore((s) => s.txs);
   const plan = useStore((s) => s.plan);
@@ -25,22 +26,29 @@ export default function Home() {
 
   const today = dateKey();
   const month = monthKey();
-  const budget = budgets[month];
-  const sum = useMemo(() => monthSummary(budget), [budget]);
-  const daily = useMemo(() => dailyStats(budget, txs, today), [budget, txs, today]);
+  const sum = useMemo(() => monthFlow(fixed, oneOffs, month), [fixed, oneOffs, month]);
+  const daily = useMemo(() => dailyStats(sum.dailyBucket, txs, today), [sum.dailyBucket, txs, today]);
+  // This month's expenses, largest first: fixed ones plus this month's one-offs.
+  const outs = useMemo(
+    () =>
+      [...fixed.filter((f) => f.direction === 'out'), ...oneOffs.filter((o) => o.month === month && o.direction === 'out')]
+        .filter((i) => i.amount > 0)
+        .sort((a, b) => b.amount - a.amount),
+    [fixed, oneOffs, month],
+  );
   const series = useMemo(() => dailySeries(txs, today, 14), [txs, today]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
-  const proj = useMemo(() => project(resolvePlan(plan, budget, accounts)), [plan, budget, accounts]);
+  const proj = useMemo(() => project(resolvePlan(plan, fixed, oneOffs, accounts, month)), [plan, fixed, oneOffs, accounts, month]);
   const lastRow = proj.rows[proj.rows.length - 1];
 
   const metric = (k: MetricKey): string => {
     switch (k) {
       case 'income': return money(sum.income);
-      case 'totalOut': return money(sum.totalOut);
       case 'expense': return money(sum.expense);
       case 'saving': return money(sum.saving);
+      case 'extraIncome': return money(sum.extraIn);
+      case 'extraExpense': return money(sum.extraOut);
       case 'debtPayment': return money(sum.debtPayment);
-      case 'remaining': return money(sum.remaining);
       case 'spendRatio': return fmtPct(sum.spendRatio);
       case 'savingRate': return fmtPct(sum.savingRate);
       case 'netWorth': return money(total);
@@ -69,7 +77,7 @@ export default function Home() {
             </Row>
           </>
         ) : (
-          <Txt v="label">Chưa có quỹ chi tiêu hằng ngày. Vào Ngân sách, mở một mục chi tiêu và bật “quỹ chi tiêu hằng ngày”.</Txt>
+          <Txt v="label">Chưa có quỹ chi tiêu hằng ngày. Vào Ngân sách → Cố định, mở một khoản chi và bật “quỹ chi tiêu hằng ngày”.</Txt>
         )}
         <Btn label="Nhập chi tiêu" icon="add" onPress={() => setAddOpen(true)} />
         <View style={{ gap: 6 }}>
@@ -87,16 +95,15 @@ export default function Home() {
     month: (
       <Card key="month" style={{ gap: 10 }} onPress={() => router.navigate('/budget')}>
         <Txt v="heading">{monthLabel(month)}</Txt>
-        <Row><Txt v="label">Thu nhập</Txt><Amount value={sum.income} /></Row>
-        <Row><Txt v="label">Tổng chi (gồm để dành)</Txt><Amount value={sum.totalOut} /></Row>
-        <Row><Txt v="label">Trong đó để dành</Txt><Amount value={sum.saving} /></Row>
+        <Row><Txt v="label">Thu{sum.extraIn > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.income} /></Row>
+        <Row><Txt v="label">Chi{sum.extraOut > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.expense} /></Row>
         <Row>
-          <Txt v="label">Tồn</Txt>
-          <Amount value={sum.remaining} color={sum.remaining < 0 ? c.negative : c.positive} signed />
+          <Txt v="label">{sum.saving < 0 ? 'Thiếu hụt' : 'Để dành được'}</Txt>
+          <Amount value={Math.abs(sum.saving)} color={sum.saving < 0 ? c.negative : c.positive} />
         </Row>
         <View style={{ gap: 6, marginTop: 4 }}>
           <Row>
-            <Txt v="label">Chi/Thu (không tính để dành)</Txt>
+            <Txt v="label">Chi/Thu</Txt>
             <Txt v="num">{hide ? '•••' : fmtPct(sum.spendRatio)}</Txt>
           </Row>
           <Meter ratio={sum.spendRatio} color={sum.spendRatio > 1 ? c.negative : c.accent} />
@@ -112,22 +119,19 @@ export default function Home() {
     ),
     budget: (
       <Card key="budget" style={{ gap: 12 }} onPress={() => router.navigate('/budget')}>
-        <Txt v="heading">Các mục lớn nhất</Txt>
-        {budget?.items.length ? (
-          [...budget.items]
-            .sort((a, b) => b.amount - a.amount)
-            .slice(0, 5)
-            .map((i) => (
+        <Txt v="heading">Khoản chi lớn nhất tháng này</Txt>
+        {outs.length ? (
+          outs.slice(0, 5).map((i) => (
               <View key={i.id} style={{ gap: 5 }}>
                 <Row>
                   <Txt numberOfLines={1} style={{ flex: 1, marginRight: 12 }}>{i.name}</Txt>
                   <Amount value={i.amount} />
                 </Row>
-                <Meter ratio={sum.totalOut > 0 ? i.amount / sum.totalOut : 0} color={CHART.series[0]} />
+                <Meter ratio={sum.expense > 0 ? i.amount / sum.expense : 0} color={CHART.series[0]} />
               </View>
             ))
         ) : (
-          <Txt v="label">Chưa có mục nào trong tháng này.</Txt>
+          <Txt v="label">Chưa có khoản chi nào. Nhập thu chi cố định ở tab Ngân sách.</Txt>
         )}
       </Card>
     ),

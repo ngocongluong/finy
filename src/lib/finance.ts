@@ -1,43 +1,74 @@
-// Pure calculations over budgets, accounts and transactions.
-import { daysInMonth } from './format';
-import type { Account, MonthBudget, Tx } from './types';
+// Pure calculations: the monthly cash-flow table, net worth, daily allowance.
+import { daysInMonth, shiftMonth, uid } from './format';
+import type { Account, FixedItem, MonthBudget, OneOff, Tx } from './types';
 
-export interface MonthSummary {
+/** Income, spending and what is left over for one month. */
+export interface MonthFlow {
+  month: string;
+  /** Fixed monthly income. */
+  fixedIn: number;
+  /** One-off income expected this month. */
+  extraIn: number;
   income: number;
-  /** Ordinary spending items. */
+  /** Fixed monthly expenses, loan repayments included. */
+  fixedOut: number;
+  /** One-off expenses expected this month. */
+  extraOut: number;
   expense: number;
+  /** The part of fixedOut that is loan repayments. */
   debtPayment: number;
+  /** income - expense: what can be set aside this month (negative = shortfall). */
   saving: number;
-  /** Everything allocated this month: expense + debt payments + saving ("Tổng chi" in the sheet). */
-  totalOut: number;
-  /** Income minus everything allocated ("Tồn"). */
-  remaining: number;
-  /** (expense + debt payments) / income. Saving is not counted as spending. */
+  /** expense / income. */
   spendRatio: number;
+  /** saving / income. */
   savingRate: number;
-  /** Amount of the item flagged as the daily-spending bucket. */
+  /** Amount of the fixed expense flagged as the daily-spending bucket. */
   dailyBucket: number;
 }
 
-export function monthSummary(b: MonthBudget | undefined): MonthSummary {
-  const items = b?.items ?? [];
-  const sum = (kind: string) => items.filter((i) => i.kind === kind).reduce((s, i) => s + i.amount, 0);
-  const income = b?.income ?? 0;
-  const expense = sum('expense');
-  const debtPayment = sum('debt');
-  const saving = sum('saving');
-  const totalOut = expense + debtPayment + saving;
+const sum = (list: { amount: number }[]) => list.reduce((s, i) => s + i.amount, 0);
+
+export function monthFlow(fixed: FixedItem[], oneOffs: OneOff[], month: string): MonthFlow {
+  const fixedIn = sum(fixed.filter((f) => f.direction === 'in'));
+  const outs = fixed.filter((f) => f.direction === 'out');
+  const fixedOut = sum(outs);
+  const mine = oneOffs.filter((o) => o.month === month);
+  const extraIn = sum(mine.filter((o) => o.direction === 'in'));
+  const extraOut = sum(mine.filter((o) => o.direction === 'out'));
+  const income = fixedIn + extraIn;
+  const expense = fixedOut + extraOut;
   return {
+    month,
+    fixedIn,
+    extraIn,
     income,
+    fixedOut,
+    extraOut,
     expense,
-    debtPayment,
-    saving,
-    totalOut,
-    remaining: income - totalOut,
-    spendRatio: income > 0 ? (expense + debtPayment) / income : NaN,
-    savingRate: income > 0 ? saving / income : NaN,
-    dailyBucket: items.filter((i) => i.daily).reduce((s, i) => s + i.amount, 0),
+    debtPayment: sum(outs.filter((f) => f.kind === 'debt')),
+    saving: income - expense,
+    spendRatio: income > 0 ? expense / income : NaN,
+    savingRate: income > 0 ? (income - expense) / income : NaN,
+    dailyBucket: sum(outs.filter((f) => f.daily)),
   };
+}
+
+export interface FlowRow extends MonthFlow {
+  /** Savings accumulated from the first row of the table up to and including this month. */
+  cumulative: number;
+}
+
+/** The income / expense / saving table for `count` consecutive months starting at `start`. */
+export function flowTable(fixed: FixedItem[], oneOffs: OneOff[], start: string, count: number): FlowRow[] {
+  const rows: FlowRow[] = [];
+  let cumulative = 0;
+  for (let i = 0; i < count; i++) {
+    const flow = monthFlow(fixed, oneOffs, shiftMonth(start, i));
+    cumulative += flow.saving;
+    rows.push({ ...flow, cumulative });
+  }
+  return rows;
 }
 
 export function netWorth(accounts: Account[]): number {
@@ -58,9 +89,8 @@ export interface DailyStats {
   daysLeft: number;
 }
 
-export function dailyStats(b: MonthBudget | undefined, txs: Tx[], today: string): DailyStats {
+export function dailyStats(bucket: number, txs: Tx[], today: string): DailyStats {
   const month = today.slice(0, 7);
-  const bucket = monthSummary(b).dailyBucket;
   const days = daysInMonth(month);
   const dayOfMonth = Number(today.slice(8, 10));
   const daysLeft = days - dayOfMonth + 1; // including today
@@ -100,4 +130,21 @@ export function dailySeries(txs: Tx[], today: string, n: number): { date: string
     if (i !== undefined) out[i].spent += t.amount;
   }
   return out;
+}
+
+/**
+ * Converts a budget from the old per-month model into fixed monthly items.
+ * Income becomes one fixed income; spending and loan lines become fixed
+ * expenses. "Saving" lines are dropped because saving is now calculated
+ * (income - expenses), and zero-amount placeholders are dropped because
+ * occasional costs are now entered as one-offs in the month they happen.
+ */
+export function migrateLegacyBudget(b: MonthBudget): FixedItem[] {
+  const fixed: FixedItem[] = [];
+  if (b.income > 0) fixed.push({ id: uid(), name: 'Thu nhập', amount: b.income, direction: 'in' });
+  for (const i of b.items) {
+    if (i.kind === 'saving' || !(i.amount > 0)) continue;
+    fixed.push({ id: i.id, name: i.name, amount: i.amount, direction: 'out', kind: i.kind, daily: i.daily || undefined });
+  }
+  return fixed;
 }

@@ -13,8 +13,8 @@ type NumKey = 'startNetWorth' | 'monthlyIncome' | 'monthlyExpense' | 'incomeGrow
 
 const FIELDS: { key: NumKey; label: string; money: boolean; auto: boolean; hint: string }[] = [
   { key: 'startNetWorth', label: 'Tài sản ròng hiện tại', money: true, auto: true, hint: 'Mặc định lấy từ “Tổng tiền hiện có”.' },
-  { key: 'monthlyIncome', label: 'Thu nhập mỗi tháng', money: true, auto: true, hint: 'Mặc định lấy thu nhập tháng này.' },
-  { key: 'monthlyExpense', label: 'Chi tiêu mỗi tháng', money: true, auto: true, hint: 'Không gồm trả nợ và để dành. Mặc định lấy tổng các mục chi tiêu tháng này.' },
+  { key: 'monthlyIncome', label: 'Thu nhập mỗi tháng', money: true, auto: true, hint: 'Mặc định lấy tổng thu cố định hàng tháng.' },
+  { key: 'monthlyExpense', label: 'Chi tiêu mỗi tháng', money: true, auto: true, hint: 'Không gồm trả nợ vay. Mặc định lấy tổng chi cố định hàng tháng.' },
   { key: 'incomeGrowthPct', label: 'Thu nhập tăng mỗi năm (%)', money: false, auto: false, hint: 'Ví dụ 5 = tăng 5% mỗi năm.' },
   { key: 'inflationPct', label: 'Lạm phát (%/năm)', money: false, auto: false, hint: 'Chi tiêu tăng theo lạm phát mỗi năm.' },
   { key: 'returnPct', label: 'Lãi tiết kiệm / đầu tư (%/năm)', money: false, auto: false, hint: 'Lợi nhuận kỳ vọng trên số tiền để dành.' },
@@ -109,7 +109,8 @@ export default function Plan() {
   const { c, gap } = useUi();
   const money = useMoney();
   const plan = useStore((s) => s.plan);
-  const budgets = useStore((s) => s.budgets);
+  const fixed = useStore((s) => s.fixed);
+  const oneOffs = useStore((s) => s.oneOffs);
   const accounts = useStore((s) => s.accounts);
   const setPlan = useStore((s) => s.setPlan);
   const setPendingPrompt = useStore((s) => s.setPendingPrompt);
@@ -119,7 +120,7 @@ export default function Plan() {
   const [debt, setDebt] = useState<PlanDebt | null | undefined>(undefined);
   const [goal, setGoal] = useState<PlanGoal | null | undefined>(undefined);
 
-  const inputs = useMemo(() => resolvePlan(plan, budgets[monthKey()], accounts), [plan, budgets, accounts]);
+  const inputs = useMemo(() => resolvePlan(plan, fixed, oneOffs, accounts, monthKey()), [plan, fixed, oneOffs, accounts]);
   const all = useMemo(() => projectAll(inputs), [inputs]);
   const base = all.base;
   const last = base.rows[base.rows.length - 1];
@@ -218,7 +219,7 @@ export default function Plan() {
               <Txt v="small" color={c.accent}>Lấy lại theo ngân sách</Txt>
             </Pressable>
           ) : (
-            <Txt v="small">theo mục “Trả nợ” trong ngân sách</Txt>
+            <Txt v="small">theo các khoản “Trả nợ vay” cố định</Txt>
           )}
         </Row>
         {inputs.debts.length === 0 ? <Txt v="label">Không có khoản vay nào.</Txt> : null}

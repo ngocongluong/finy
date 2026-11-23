@@ -1,3 +1,25 @@
+/** A source of income or an expense that repeats every month. */
+export interface FixedItem {
+  id: string;
+  name: string;
+  amount: number;
+  direction: 'in' | 'out';
+  /** Only for direction "out": a loan repayment (feeds the long-range plan's debts) or ordinary spending. */
+  kind?: 'expense' | 'debt';
+  /** Only for direction "out": the bucket that day-to-day spending is tracked against. */
+  daily?: boolean;
+}
+
+/** An expected one-off income or expense in one specific month. */
+export interface OneOff {
+  id: string;
+  month: string; // YYYY-MM
+  name: string;
+  amount: number;
+  direction: 'in' | 'out';
+}
+
+// Legacy per-month budget (app versions before the fixed / one-off model). Only read for migration.
 export type BudgetKind = 'expense' | 'debt' | 'saving';
 
 export interface BudgetItem {
@@ -60,14 +82,14 @@ export interface PlanParams {
   years: number; // 5..10
   /** null = use the current total of all accounts. */
   startNetWorth: number | null;
-  /** null = use this month's income from the budget. */
+  /** null = use the total of the fixed monthly incomes. */
   monthlyIncome: number | null;
-  /** null = use this month's expense items from the budget. */
+  /** null = use the total of the fixed monthly expenses (loan repayments excluded). */
   monthlyExpense: number | null;
   incomeGrowthPct: number;
   inflationPct: number;
   returnPct: number;
-  /** null = derive from "debt" items of this month's budget. */
+  /** null = derive from the fixed monthly expenses marked as loan repayments. */
   debts: PlanDebt[] | null;
   goals: PlanGoal[];
 }
@@ -76,11 +98,11 @@ export type HomeSectionId = 'today' | 'month' | 'networth' | 'budget' | 'recent'
 
 export type MetricKey =
   | 'income'
-  | 'totalOut'
   | 'expense'
   | 'saving'
+  | 'extraIncome'
+  | 'extraExpense'
   | 'debtPayment'
-  | 'remaining'
   | 'spendRatio'
   | 'savingRate'
   | 'netWorth'
@@ -139,7 +161,9 @@ export interface AppSettings {
   apiKeyOverride: string | null;
 }
 
+/** First-run data bundled at build time from secrets/seed.json. */
 export interface Seed {
-  month?: { income?: number; items?: { name: string; amount: number; kind: BudgetKind; daily?: boolean }[] };
+  fixed?: Omit<FixedItem, 'id'>[];
+  oneOffs?: Omit<OneOff, 'id'>[];
   accounts?: { name: string; kind: AccountKind; balance: number }[];
 }

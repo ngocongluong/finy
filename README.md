@@ -8,18 +8,20 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 
 | Tab | Làm được gì |
 |---|---|
-| **Tổng quan** | Hôm nay còn tiêu được bao nhiêu, chi tiêu 14 ngày, tóm tắt tháng (Thu nhập, Tổng chi, Để dành, Tồn, Chi/Thu), tổng tiền hiện có, dự phóng dài hạn. Nút con mắt để ẩn mọi số tiền. |
-| **Ngân sách** | Thêm / sửa / xoá các mục chi, trả nợ, để dành theo từng tháng; thu nhập tháng; danh sách tài khoản tạo nên tổng tiền hiện có. Tháng mới tự sao chép từ tháng trước. |
+| **Tổng quan** | Hôm nay còn tiêu được bao nhiêu, chi tiêu 14 ngày, tóm tắt tháng (Thu, Chi, Để dành được, Chi/Thu), tổng tiền hiện có, dự phóng dài hạn. Nút con mắt để ẩn mọi số tiền. |
+| **Ngân sách** | Nhập nguồn thu cố định và khoản chi cố định hàng tháng, thêm các khoản thu / chi phát sinh cho những tháng tự chọn; Finy lập bảng thu / chi / để dành cho 6, 12 hoặc 24 tháng tới. Kèm danh sách tài khoản tạo nên tổng tiền hiện có. |
 | **Giao dịch** | Nhập chi tiêu hằng ngày; đồng bộ giao dịch HSBC từ Gmail. |
 | **Kế hoạch** | Dự phóng tài sản ròng 5–10 năm theo 3 kịch bản, khoản vay, các khoản chi lớn, bảng từng năm. |
 | **Finy** | Trò chuyện với Claude: tư vấn dựa trên số liệu thật, ghi chép giúp, và đổi giao diện theo góp ý ("đổi sang tông xanh lá", "ẩn khối kế hoạch", "thêm thẻ tỷ lệ để dành"…). |
 
 ### Cách tính
 
-- **Tổng chi** = chi tiêu + trả nợ + để dành (giống bảng tính gốc). **Tồn** = thu nhập − tổng chi.
-- **Chi/Thu** = (chi tiêu + trả nợ) / thu nhập, không tính để dành.
-- **Hạn mức hôm nay** = (quỹ chi tiêu hằng ngày − đã tiêu các ngày trước trong tháng) / số ngày còn lại. Quỹ là mục ngân sách được bật "quỹ chi tiêu hằng ngày".
-- **Kế hoạch**: mô phỏng theo tháng; thu nhập tăng theo %/năm, chi tiêu tăng theo lạm phát, tiền để dành sinh lãi. Khoản vay có nhập dư nợ sẽ được trả dần và giải phóng dòng tiền khi hết nợ; khoản chưa nhập dư nợ được coi là trả suốt kế hoạch.
+- **Thu của một tháng** = tổng thu cố định + thu phát sinh của tháng đó. **Chi** = tổng chi cố định (gồm trả nợ) + chi phát sinh của tháng đó.
+- **Để dành được** = thu − chi. Bạn không nhập số để dành; Finy tính ra. Số âm nghĩa là tháng đó thiếu hụt.
+- **Chi/Thu** = chi / thu của tháng.
+- Khoản lặp lại mọi tháng là **cố định**; khoản chỉ có ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe) là **phát sinh**, khi thêm có thể chọn nhiều tháng cùng lúc.
+- **Hạn mức hôm nay** = (quỹ chi tiêu hằng ngày − đã tiêu các ngày trước trong tháng) / số ngày còn lại. Quỹ là khoản chi cố định được bật "quỹ chi tiêu hằng ngày".
+- **Kế hoạch**: mô phỏng theo tháng từ thu chi cố định và các khoản phát sinh đã nhập; thu nhập tăng theo %/năm, chi tiêu tăng theo lạm phát, tiền để dành sinh lãi. Khoản vay có nhập dư nợ sẽ được trả dần và giải phóng dòng tiền khi hết nợ; khoản chưa nhập dư nợ được coi là trả suốt kế hoạch.
 
 ## Bảo mật
 
@@ -86,7 +88,7 @@ src/lib/
   store.ts          trạng thái toàn app, ghi xuống DB mã hoá
   db.ts             SQLite + SQLCipher
   security.ts       PIN, vân tay, khoá DB
-  finance.ts        tính toán tháng, hạn mức ngày        (thuần, có test)
+  finance.ts        bảng thu chi theo tháng, hạn mức ngày (thuần, có test)
   plan.ts           dự phóng 5–10 năm                    (thuần, có test)
   theme.ts          cấu hình giao diện + kiểm tra tương phản (thuần, có test)
   claude.ts         Claude: tư vấn + công cụ sửa dữ liệu / giao diện
