@@ -956,30 +956,42 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
                   termsChangedFrom(0);
                 }}
               />
-            ) : sum ? (
+            ) : (
               <>
-                <Row>
-                  <Txt v="small">Dư nợ còn lại khi bắt đầu</Txt>
-                  <Txt v="small">{money(sum.carried)}</Txt>
-                </Row>
+                {sum ? (
+                  <Row>
+                    <Txt v="small">Tiền nợ hiện tại (đầu giai đoạn)</Txt>
+                    <Txt v="small">{money(sum.carried)}</Txt>
+                  </Row>
+                ) : null}
                 <AmountField
-                  key={`p${key}-${p.key}-${sum.carried}`}
-                  label="Số tiền vay giai đoạn này (sau khi trả trước)"
-                  value={sum.carried - p.prepayment}
+                  key={`pp${key}-${p.key}`}
+                  label="Số tiền trả trước trong giai đoạn này"
+                  value={p.prepayment}
                   onChange={(n) => {
-                    update(p.key, { prepayment: Math.max(0, sum.carried - n) });
+                    update(p.key, { prepayment: Math.max(0, n) });
                     termsChangedFrom(i);
                   }}
                 />
-                {p.prepayment > 0 ? (
-                  <Txt v="small" color={c.accent}>
-                    Trả trước {money(Math.min(p.prepayment, sum.carried))} vào {monthYear(from)}: tính là tiền chi ra trong tháng đó.
-                  </Txt>
-                ) : (
-                  <Txt v="small">Không trả trước. Nhập số nhỏ hơn dư nợ còn lại nếu bạn trả trước một phần.</Txt>
-                )}
+                {sum ? (
+                  <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
+                    <Row>
+                      <Txt v="label">Dư nợ còn lại sau trả trước</Txt>
+                      <Txt v="heading">{money(sum.principal)}</Txt>
+                    </Row>
+                    <Txt v="small">
+                      = nợ hiện tại {money(sum.carried)} − trả trước {money(sum.prepayment)}
+                      {p.prepayment > sum.carried ? ' (trả trước nhiều hơn số nợ: chỉ tính bằng số nợ)' : ''}
+                    </Txt>
+                    {sum.prepayment > 0 ? (
+                      <Txt v="small" color={c.accent}>
+                        Khoản trả trước được tính là tiền chi ra trong {monthYear(from)}.
+                      </Txt>
+                    ) : null}
+                  </View>
+                ) : null}
               </>
-            ) : null}
+            )}
             <Field
               label="Lãi suất (%/năm)"
               value={p.rateText}
