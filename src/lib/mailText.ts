@@ -78,3 +78,11 @@ export function parseHsbcCardEmail(body: string): HsbcCardEmail | null {
     available: vnd(/số dư khả dụng là\s+([\d.,]+)\s*VND/i),
   };
 }
+
+// HSBC Vietnam sends card alerts from notification.hsbc.com.hk (the group's Hong Kong domain).
+export const ALLOWED_SENDER_DOMAINS = ['hsbc.com.vn', 'hsbc.com', 'hsbc.com.hk'];
+
+/** Mail worth asking Claude about: it names an amount and reads like a transaction. Marketing and statements are skipped. */
+export function looksLikeTransaction(body: string): boolean {
+  return /\d[\d.,]*\s*(VND|VNĐ|đ\b)/i.test(body) && /giao dịch|transaction|ghi nợ|ghi có|debit|credit|chuyển khoản|thanh toán|payment/i.test(body);
+}

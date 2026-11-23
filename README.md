@@ -20,7 +20,8 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 - **Để dành được** = thu − chi. Bạn không nhập số để dành; Finy tính ra. Số âm nghĩa là tháng đó thiếu hụt.
 - **Chi/Thu** = chi / thu của tháng.
 - Khoản lặp lại mọi tháng là **cố định**; khoản chỉ có ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe) là **phát sinh**, khi thêm có thể chọn nhiều tháng cùng lúc. Một khoản cố định có thể mang **số tiền riêng cho một tháng** (kể cả 0) mà không ảnh hưởng các tháng khác.
-- **Thẻ tín dụng**: một khoản chi cố định được đánh dấu "Tín dụng" là *dự chi* mỗi kỳ sao kê. Kỳ sao kê chốt vào ngày sao kê (mặc định 14, đổi trong Cài đặt) và tính cho tháng có ngày chốt đó: kỳ 15/11–14/12 thuộc tháng 12. *Đã xài* = tổng giao dịch thẻ trong kỳ (trừ hoàn tiền). Khi đã xài vượt dự chi, Finy cảnh báo ở Tổng quan, bật thông báo sau khi đồng bộ, và cộng phần vượt vào chi của tháng đó. Giao dịch thẻ không tính vào quỹ chi tiêu hằng ngày.
+- **Thẻ tín dụng**: một khoản chi cố định được đánh dấu "Tín dụng" là *dự chi* mỗi kỳ sao kê. Kỳ sao kê chốt vào ngày sao kê (mặc định 14, đổi trong Cài đặt) và được trả bằng lương của tháng có ngày chốt đó: kỳ 15/11–14/12 thuộc tháng 12. *Đã xài* = tổng giao dịch thẻ trong kỳ (trừ hoàn tiền). Khi kỳ còn mở, chi của tháng tính theo dự chi (hoặc số đã xài nếu nhiều hơn); khi kỳ đã chốt, số đã xài thực tế thay cho dự chi. Tổng quan hiện kỳ hiện tại, và từ ngày 15 hiện thêm kỳ vừa chốt; chạm vào để xem toàn bộ giao dịch của kỳ (kèm giờ:phút:giây). Khi đã xài vượt dự chi, Finy cảnh báo ở Tổng quan và bật thông báo sau khi đồng bộ.
+- Mọi số tiền được ẩn mỗi lần mở app (kể cả trong trò chuyện với Finy); bấm biểu tượng con mắt ở đầu màn hình để hiện. Giao dịch thẻ không tính vào quỹ chi tiêu hằng ngày.
 - **Hạn mức hôm nay** = (quỹ chi tiêu hằng ngày − đã tiêu các ngày trước trong tháng) / số ngày còn lại. Quỹ là khoản chi cố định được bật "quỹ chi tiêu hằng ngày".
 - **Kế hoạch**: mô phỏng theo tháng từ thu chi cố định và các khoản phát sinh đã nhập; thu nhập tăng theo %/năm, chi tiêu tăng theo lạm phát, tiền để dành sinh lãi. Khoản vay có nhập dư nợ sẽ được trả dần và giải phóng dòng tiền khi hết nợ; khoản chưa nhập dư nợ được coi là trả suốt kế hoạch.
 
@@ -35,7 +36,7 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 Những gì rời khỏi máy:
 
 - Câu hỏi trong tab Finy kèm bản tóm tắt tài chính hiện tại → gửi tới API của Anthropic.
-- Email HSBC: chỉ email có người gửi thuộc `hsbc.com.vn` / `hsbc.com` mới được đọc. Email báo giao dịch thẻ tín dụng (định dạng cố định) được đọc ngay trên máy, không gửi đi đâu. Chỉ email HSBC có định dạng khác mới được gửi tới API của Anthropic để tách số tiền, nơi giao dịch.
+- Email HSBC: chỉ email có người gửi thuộc `hsbc.com.vn` / `hsbc.com` / `hsbc.com.hk` mới được đọc (HSBC Việt Nam gửi báo giao dịch thẻ từ `notification.hsbc.com.hk`). Email báo giao dịch thẻ tín dụng (định dạng cố định) được đọc ngay trên máy, không gửi đi đâu. Chỉ email HSBC có định dạng khác mới được gửi tới API của Anthropic để tách số tiền, nơi giao dịch.
 - Yêu cầu đọc thư → gửi tới Gmail API (quyền chỉ-đọc).
 
 **API key của Claude nằm trong file APK.** Ai có file APK đều lấy được key, nên đừng chia sẻ APK. Key không nằm trong repo này.
@@ -75,7 +76,7 @@ Ghi chú:
 - Vì app chưa được Google xác minh, màn đăng nhập hiện cảnh báo "Google hasn't verified this app": bấm **Advanced → Go to … (unsafe)** để tiếp tục. Đây là app của chính bạn, chỉ xin quyền *đọc* thư.
 - Nếu Google báo "Access blocked … has not completed the Google verification process", màn hình đồng ý đang ở chế độ *Testing*: vào [Google Auth Platform → Audience](https://console.cloud.google.com/auth/audience) của project, thêm địa chỉ Gmail của bạn vào **Test users** (hoặc bấm **Publish app**). Ở chế độ Testing, Google bắt cấp quyền lại mỗi 7 ngày.
 - Lỗi `DEVELOPER_ERROR` trong app nghĩa là chưa có OAuth client khớp package + SHA-1 của APK đang cài (chưa làm bước 2, hoặc APK được ký bằng keystore khác).
-- Bộ lọc email mặc định là `from:(hsbc.com.vn OR hsbc.com) newer_than:45d`, sửa được trong Cài đặt.
+- Bộ lọc email mặc định là `from:HSBC@notification.hsbc.com.hk newer_than:60d` (địa chỉ HSBC Việt Nam gửi báo giao dịch thẻ), sửa được trong Cài đặt. App chỉ đọc thư từ đúng tên miền HSBC; kết quả mỗi lần đồng bộ hiện ở tab Giao dịch.
 
 ## Finy tự chỉnh giao diện như thế nào
 

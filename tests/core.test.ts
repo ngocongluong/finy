@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
-import { daysInMonth, fmtInput, fmtPct, fmtVND, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
-import { htmlToText, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
+import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
+import { ALLOWED_SENDER_DOMAINS, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
 import type { FixedItem, OneOff, Tx } from '../src/lib/types';
@@ -46,6 +46,15 @@ test('amount parsing accepts how people type money', () => {
   assert.equal(parseAmount('1.2 tỷ'), 1_200_000_000);
   assert.equal(parseAmount(''), 0);
   assert.equal(parseAmount('abc'), 0);
+});
+
+test('money in chat text is hidden, dates and percentages are not', () => {
+  assert.equal(
+    maskMoney('Tháng 12 bạn xài 38 triệu, vượt 3.000.000 đ (8,6%) — kỳ 15/11–14/12, ly cà phê 62k.'),
+    'Tháng 12 bạn xài •••, vượt ••• (8,6%) — kỳ 15/11–14/12, ly cà phê •••.',
+  );
+  assert.equal(maskMoney('Còn 1,2 tỷ và 250.000 VND'), 'Còn ••• và •••');
+  assert.equal(fmtTime(new Date(2026, 10, 20, 9, 5, 7).getTime()), '09:05:07');
 });
 
 test('month helpers', () => {
@@ -157,7 +166,7 @@ test('credit-card statement cycle: closes on the statement day and belongs to th
   assert.equal(cycleMonthOf('2026-12-31', 14), '2027-01');
 });
 
-test('card spending is compared with the plan; only the overspend adds to expenses', () => {
+test('card spending: an open cycle counts the plan (or more), a closed one counts what was spent', () => {
   const card = (date: string, amount: number, extra: Partial<Tx> = {}): Tx => ({
     id: date + amount, ts: 0, date, amount, direction: 'out', note: '', source: 'hsbc', countsDaily: false, credit: true, ...extra,
   });
@@ -177,20 +186,32 @@ test('card spending is compared with the plan; only the overspend adds to expens
     oneOffs: [],
     overrides: {},
   });
-  const under = monthFlow(withPlan(8_000_000), '2026-12', { txs, statementDay: 14 });
-  assert.deepEqual([under.creditPlanned, under.creditSpent, under.creditOver], [8_000_000, 7_500_000, 0]);
-  assert.equal(under.expense, 30_000_000 + 8_000_000); // the plan is what is budgeted
+  const open = { txs, statementDay: 14, today: '2026-12-01' };
+  const closed = { txs, statementDay: 14, today: '2026-12-15' };
+  const under = monthFlow(withPlan(8_000_000), '2026-12', open);
+  assert.deepEqual([under.creditPlanned, under.creditSpent, under.creditOver, under.creditClosed], [8_000_000, 7_500_000, 0, false]);
+  assert.equal(under.creditCounted, 8_000_000); // still open: the plan is what is budgeted
+  assert.equal(under.expense, 30_000_000 + 8_000_000);
   assert.equal(under.creditLine?.id, 'cc');
   assert.ok(!under.expenseLines.some((l) => l.id === 'cc')); // shown in its own section
 
-  const over = monthFlow(withPlan(6_000_000), '2026-12', { txs, statementDay: 14 });
+  const over = monthFlow(withPlan(6_000_000), '2026-12', open);
   assert.equal(over.creditOver, 1_500_000);
-  assert.equal(over.expense, 30_000_000 + 6_000_000 + 1_500_000);
+  assert.equal(over.creditCounted, 7_500_000);
+  assert.equal(over.expense, 30_000_000 + 7_500_000);
   assert.equal(over.saving, 50_000_000 - 37_500_000);
 
-  // Without a credit plan, card spending is reported but changes nothing.
-  const none = monthFlow(B, '2026-12', { txs, statementDay: 14 });
-  assert.deepEqual([none.creditSpent, none.creditOver, none.expense], [7_500_000, 0, 30_000_000]);
+  // Closed on the 14th: the actual total replaces the plan, also when it is lower.
+  const closedUnder = monthFlow(withPlan(8_000_000), '2026-12', closed);
+  assert.deepEqual([closedUnder.creditClosed, closedUnder.creditCounted, closedUnder.expense], [true, 7_500_000, 37_500_000]);
+  // The statement day itself is still inside the cycle.
+  assert.equal(monthFlow(withPlan(8_000_000), '2026-12', { ...open, today: '2026-12-14' }).creditClosed, false);
+  // A future month's cycle is open, so it is budgeted at the plan.
+  assert.equal(monthFlow(withPlan(8_000_000), '2027-01', closed).creditCounted, 8_000_000);
+
+  // Without a credit plan, card spending is counted as it is.
+  const none = monthFlow(B, '2026-12', open);
+  assert.deepEqual([none.creditSpent, none.creditOver, none.creditCounted, none.expense], [7_500_000, 0, 7_500_000, 37_500_000]);
 });
 
 test('an expense named like a credit card becomes the credit plan, once and only when unambiguous', () => {
@@ -361,12 +382,20 @@ test('a saved custom card that uses a metric which no longer exists keeps its te
 });
 
 test('only mail from the bank is trusted', () => {
-  const domains = ['hsbc.com.vn', 'hsbc.com'];
+  const domains = ALLOWED_SENDER_DOMAINS;
+  assert.ok(senderAllowed('HSBC <alerts@notification.hsbc.com.hk>', domains));
+  assert.ok(!senderAllowed('x@hsbc.com.hk.evil.io', domains));
   assert.ok(senderAllowed('HSBC Vietnam <alerts@hsbc.com.vn>', domains));
   assert.ok(senderAllowed('no-reply@notification.hsbc.com', domains));
   assert.ok(!senderAllowed('HSBC <alerts@hsbc.com.vn.evil.io>', domains));
   assert.ok(!senderAllowed('"alerts@hsbc.com.vn" <phish@gmail.com>', domains));
   assert.ok(!senderAllowed('x@nothsbc.com', domains));
+});
+
+test('only bank mail that reads like a transaction is sent on to Claude', () => {
+  assert.ok(looksLikeTransaction('Tài khoản của Quý khách vừa ghi nợ 1.500.000 VND, giao dịch chuyển khoản.'));
+  assert.ok(!looksLikeTransaction('Ưu đãi hoàn tiền 10% khi mở thẻ mới tại HSBC!'));
+  assert.ok(!looksLikeTransaction('Sao kê tháng 11 của Quý khách đã sẵn sàng.'));
 });
 
 test('html email bodies become readable text', () => {

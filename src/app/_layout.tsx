@@ -8,7 +8,8 @@ import { Alert, AppState, Modal, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LockScreen } from '../components/LockScreen';
 import { fmtVND } from '../lib/format';
-import { creditOverMessage, isSyncing, shouldAlertCreditOver, syncHsbc } from '../lib/hsbc';
+import * as gmail from '../lib/gmail';
+import { creditOverMessage, isSyncing, runSync, shouldAlertCreditOver } from '../lib/hsbc';
 import { autoLockSuspended } from '../lib/lockGuard';
 import { useStore } from '../lib/store';
 
@@ -39,16 +40,21 @@ export default function RootLayout() {
   // so card spending and the overspend warning are current without a manual sync.
   useEffect(() => {
     if (phase !== 'ready') return;
-    const { settings } = useStore.getState();
-    if (!settings.gmailEmail || isSyncing()) return;
-    if (settings.lastSyncTs && Date.now() - settings.lastSyncTs < 30 * 60_000) return;
-    syncHsbc()
-      .then(async (r) => {
-        if (r.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
-      })
-      .catch(() => {
-        // Offline or the Google session expired: the Transactions tab shows the reason on a manual sync.
-      });
+    (async () => {
+      let { settings } = useStore.getState();
+      if (!settings.gmailEmail) {
+        // Signed in with Google but the app never stored it (a sign-in whose answer got lost).
+        const email = await gmail.existingAccount().catch(() => null);
+        if (!email) return;
+        useStore.getState().setSettings({ gmailEmail: email, lastSyncTs: null });
+        settings = useStore.getState().settings;
+      }
+      if (isSyncing()) return;
+      if (settings.lastSyncTs && Date.now() - settings.lastSyncTs < 30 * 60_000) return;
+      // runSync records any failure; the Transactions tab shows it.
+      const r = await runSync();
+      if (r?.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
+    })();
   }, [phase]);
 
   // Lock when the app leaves the foreground.

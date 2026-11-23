@@ -4,7 +4,7 @@ import { Alert, Switch, View } from 'react-native';
 import { dateKey, dayLabel, fmtVND, monthKey, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
 import type { Account, AccountKind, FixedItem, OneOff, Tx } from '../lib/types';
-import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useUi } from './ui';
+import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
   const { c } = useUi();
@@ -214,6 +214,7 @@ export function MonthLineSheet({
   const upsertFixed = useStore((s) => s.upsertFixed);
   const setOverride = useStore((s) => s.setOverride);
   const current = useStore((s) => (item ? s.overrides[month]?.[item.id] : undefined));
+  const money = useMoney();
   const [amount, setAmount] = useState(0);
   const [key, setKey] = useState(0);
 
@@ -245,7 +246,7 @@ export function MonthLineSheet({
       }>
       <AmountField key={key} label={`Số tiền trong ${label}`} value={amount} onChange={setAmount} autoFocus />
       <Txt v="small">
-        Mức cố định hàng tháng: {fmtVND(item.amount)}.{overridden ? ` ${label} đang dùng mức riêng ${fmtVND(current)}.` : ''} Nhập 0 nếu tháng này không có khoản này.
+        Mức cố định hàng tháng: {money(item.amount)}.{overridden ? ` ${label} đang dùng mức riêng ${money(current)}.` : ''} Nhập 0 nếu tháng này không có khoản này.
       </Txt>
       <Btn
         label="Áp dụng cho mọi tháng"
@@ -260,7 +261,7 @@ export function MonthLineSheet({
       />
       {overridden ? (
         <Btn
-          label={`Bỏ mức riêng, về ${fmtVND(item.amount)}`}
+          label={`Bỏ mức riêng, về ${money(item.amount)}`}
           kind="ghost"
           icon="arrow-undo-outline"
           onPress={() => {

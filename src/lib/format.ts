@@ -101,6 +101,12 @@ export function dayLabel(date: string, today: string = dateKey()): string {
   return `${WEEKDAYS[dt.getDay()]}, ${d}/${m}/${y}`;
 }
 
+/** 20:15:07 */
+export function fmtTime(ts: number): string {
+  const d = new Date(ts);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 22/11 20:15 */
 export function fmtDateTime(ts: number): string {
   const d = new Date(ts);
@@ -109,4 +115,15 @@ export function fmtDateTime(ts: number): string {
 
 export function uid(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Hides money in free text (chat messages): grouped numbers like 1.250.000 and
+ * numbers followed by a money unit (150k, 2,5 triệu, 30tr, 1 tỷ, 500 đ).
+ * Dates, days and percentages are left alone.
+ */
+export function maskMoney(text: string): string {
+  return text
+    .replace(/\d+(?:[.,]\d+)?\s*(?:triệu|tr\b|tỷ|tỉ|nghìn|ngàn|k\b|đ\b|đồng|VND|VNĐ)/gi, '•••')
+    .replace(/\d{1,3}(?:[.,]\d{3})+(?:\s*(?:đ|VND|VNĐ))?/g, '•••');
 }

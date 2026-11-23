@@ -6,7 +6,7 @@ import { Btn, Card, Chip, Field, IconBtn, Row, Screen, Segmented, Sheet, Txt, us
 import { apiKey, testKey } from '../lib/claude';
 import { fmtVND } from '../lib/format';
 import * as gmail from '../lib/gmail';
-import { creditOverMessage, shouldAlertCreditOver, syncHsbc } from '../lib/hsbc';
+import { creditOverMessage, describeSync, runSync, shouldAlertCreditOver } from '../lib/hsbc';
 import { withoutAutoLock } from '../lib/lockGuard';
 import { biometricAvailable, getBiometricPref, PIN_LENGTH, setBiometricPref, setPin, verifyPin } from '../lib/security';
 import { useStore } from '../lib/store';
@@ -89,10 +89,12 @@ export default function Settings() {
       setSettings({ gmailEmail: email });
       // Bring the transactions in straight away.
       setGmailMsg('Đã kết nối. Đang lấy giao dịch HSBC…');
-      const r = await syncHsbc();
-      setGmailMsg(r.scanned === 0 ? 'Đã kết nối. Chưa thấy email HSBC nào khớp bộ lọc.' : `Đã kết nối và thêm ${r.imported} giao dịch từ ${r.scanned} email HSBC.`);
       setGmailError(false);
-      if (r.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
+      const r = await runSync();
+      const report = useStore.getState().settings.lastSyncReport;
+      setGmailError(!r);
+      setGmailMsg(r ? `Đã kết nối. ${describeSync(r)}` : `Đã kết nối nhưng đồng bộ lỗi: ${report?.text ?? ''}`);
+      if (r?.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       setGmailError(true);
@@ -146,7 +148,7 @@ export default function Settings() {
   const embedded = !settings.apiKeyOverride && !!apiKey();
 
   return (
-    <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
+    <Screen title="Cài đặt" eye={false} right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
       <Card style={{ gap: 14 }}>
         <Txt v="heading">Bảo mật</Txt>
         <Toggle
@@ -159,7 +161,7 @@ export default function Settings() {
             setBiometricPref(v);
           }}
         />
-        <Toggle label="Ẩn số tiền khi mở app" hint="Bấm biểu tượng con mắt ở Tổng quan để hiện lại." value={settings.hideAmountsOnOpen} onChange={(v) => setSettings({ hideAmountsOnOpen: v })} />
+        <Txt v="small">Mọi số tiền luôn được ẩn khi mở app. Bấm biểu tượng con mắt ở đầu màn hình để hiện.</Txt>
         <View style={{ gap: 8 }}>
           <Txt v="label">Tự khoá khi rời app</Txt>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -196,7 +198,7 @@ export default function Settings() {
         </Row>
         <Field label="Bộ lọc tìm email (cú pháp tìm kiếm của Gmail)" value={query} onChangeText={setQuery} />
         {query.trim() !== settings.gmailQuery ? <Btn label="Lưu bộ lọc" kind="ghost" onPress={() => setSettings({ gmailQuery: query.trim() })} disabled={!query.trim()} /> : null}
-        <Txt v="small">Chỉ email gửi từ hsbc.com.vn hoặc hsbc.com mới được đọc. Email báo giao dịch thẻ tín dụng được đọc ngay trên máy; chỉ email HSBC có định dạng khác mới được gửi tới Claude để tách số tiền và nơi giao dịch.</Txt>
+        <Txt v="small">Chỉ email gửi từ tên miền của HSBC (hsbc.com.vn, hsbc.com, hsbc.com.hk) mới được đọc. Email báo giao dịch thẻ tín dụng được đọc ngay trên máy; chỉ email HSBC có định dạng khác mới được gửi tới Claude để tách số tiền và nơi giao dịch.</Txt>
       </Card>
 
       <Card style={{ gap: 12 }}>

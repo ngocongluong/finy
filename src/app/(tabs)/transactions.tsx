@@ -3,9 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, View } from 'react-native';
 import { TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Empty, IconBtn, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
-import { describeError } from '../../lib/claude';
-import { dateKey, dayLabel, fmtDateTime, fmtVND } from '../../lib/format';
-import { creditOverMessage, shouldAlertCreditOver, syncHsbc } from '../../lib/hsbc';
+import { dateKey, dayLabel, fmtDateTime, fmtTime, fmtVND } from '../../lib/format';
+import { creditOverMessage, runSync, shouldAlertCreditOver } from '../../lib/hsbc';
 import { useStore } from '../../lib/store';
 import type { Tx } from '../../lib/types';
 
@@ -17,6 +16,7 @@ export default function Transactions() {
   const txs = useStore((s) => s.txs);
   const gmailEmail = useStore((s) => s.settings.gmailEmail);
   const lastSync = useStore((s) => s.settings.lastSyncTs);
+  const report = useStore((s) => s.settings.lastSyncReport);
 
   const [filter, setFilter] = useState<Filter>('all');
   const [editing, setEditing] = useState<Tx | null | undefined>(undefined); // undefined = closed, null = new
@@ -38,16 +38,10 @@ export default function Transactions() {
     setSyncing(true);
     setStatus({ text: 'Đang kết nối Gmail…' });
     try {
-      const r = await syncHsbc((text) => setStatus({ text }));
-      setStatus({
-        text:
-          r.scanned === 0
-            ? 'Không có email HSBC mới.'
-            : `Đã thêm ${r.imported} giao dịch từ ${r.scanned} email mới${r.skipped ? ` (${r.skipped} email không phải giao dịch)` : ''}${r.unread ? `. ${r.unread} email định dạng lạ chưa đọc được vì chưa có key Claude` : ''}${r.truncated ? `. ${r.truncated} email quá dài nên chỉ đọc phần đầu` : ''}.`,
-      });
-      if (r.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
-    } catch (e) {
-      setStatus({ text: describeError(e), error: true });
+      const r = await runSync((text) => setStatus({ text }));
+      // runSync records the outcome; the card below shows it.
+      setStatus(null);
+      if (r?.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
     } finally {
       setSyncing(false);
     }
@@ -72,7 +66,13 @@ export default function Transactions() {
         ) : (
           <Btn label="Kết nối Gmail trong Cài đặt" icon="mail-outline" kind="ghost" onPress={() => router.push('/settings')} />
         )}
-        {status ? <Txt v="small" color={status.error ? c.negative : c.muted}>{status.text}</Txt> : null}
+        {status ? (
+          <Txt v="small" color={status.error ? c.negative : c.muted}>{status.text}</Txt>
+        ) : report ? (
+          <Txt v="small" color={report.error ? c.negative : c.muted}>
+            {fmtDateTime(report.ts)}: {report.text}
+          </Txt>
+        ) : null}
       </Card>
 
       <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -97,7 +97,7 @@ export default function Transactions() {
                   <View style={{ flex: 1, marginRight: 12 }}>
                     <Txt numberOfLines={1}>{t.note}</Txt>
                     <Txt v="small">
-                      {t.source === 'hsbc' ? 'HSBC' : 'Nhập tay'}
+                      {fmtTime(t.ts)} · {t.source === 'hsbc' ? 'HSBC' : 'Nhập tay'}
                       {t.credit ? ' · thẻ tín dụng' : t.direction === 'out' && !t.countsDaily ? ' · không tính vào chi hằng ngày' : ''}
                     </Txt>
                   </View>

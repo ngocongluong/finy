@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView, 
 import { IconBtn, RichText, Screen, Txt, useUi } from '../../components/ui';
 import { apiKey, sendToFiny } from '../../lib/claude';
 import { useStore } from '../../lib/store';
+import { maskMoney } from '../../lib/format';
 import { alpha } from '../../lib/theme';
 
 const SUGGESTIONS = [
@@ -19,6 +20,7 @@ export default function Chat() {
   const chat = useStore((s) => s.chat);
   const pending = useStore((s) => s.pendingPrompt);
   const canUndo = useStore((s) => s.uiHistory.length > 0);
+  const hide = useStore((s) => s.hideAmounts);
   const focused = useIsFocused();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -97,7 +99,7 @@ export default function Chat() {
           {chat.map((m) =>
             m.role === 'user' ? (
               <View key={m.id} style={{ alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: c.accent, borderRadius: r, borderBottomRightRadius: 4, paddingHorizontal: 14, paddingVertical: 10 }}>
-                <Txt color={c.onAccent}>{m.text}</Txt>
+                <Txt color={c.onAccent}>{hide ? maskMoney(m.text) : m.text}</Txt>
               </View>
             ) : (
               <View key={m.id} style={{ alignSelf: 'flex-start', maxWidth: '94%', gap: 6 }}>
@@ -107,7 +109,7 @@ export default function Chat() {
                 {m.actions?.map((a, i) => (
                   <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: alpha(c.accent, 0.14), borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6 }}>
                     <Ionicons name="checkmark-circle" size={15} color={c.accent} />
-                    <Txt v="small" color={c.text}>{a}</Txt>
+                    <Txt v="small" color={c.text}>{hide ? maskMoney(a) : a}</Txt>
                   </View>
                 ))}
               </View>

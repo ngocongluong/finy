@@ -15,7 +15,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { fmtInput, fmtVND, parseAmount } from '../lib/format';
+import { fmtInput, fmtVND, maskMoney, parseAmount } from '../lib/format';
 import { useStore } from '../lib/store';
 import { alpha } from '../lib/theme';
 
@@ -376,19 +376,29 @@ export function Sheet({
   );
 }
 
-/** Page scaffold: safe area, title row, scrolling body. */
+/** Shows or hides every amount in the app. Amounts start hidden after each unlock. */
+export function EyeBtn() {
+  const hide = useStore((s) => s.hideAmounts);
+  const toggle = useStore((s) => s.toggleHide);
+  return <IconBtn name={hide ? 'eye-off-outline' : 'eye-outline'} onPress={toggle} label={hide ? 'Hiện số tiền' : 'Ẩn số tiền'} />;
+}
+
+/** Page scaffold: safe area, title row (with the show/hide-amounts eye), scrolling body. */
 export function Screen({
   title,
   right,
   children,
   scroll = true,
   footer,
+  eye = true,
 }: {
   title: string;
   right?: React.ReactNode;
   children: React.ReactNode;
   scroll?: boolean;
   footer?: React.ReactNode;
+  /** Show the show/hide-amounts button in the title row. */
+  eye?: boolean;
 }) {
   const { c, pad, gap } = useUi();
   const insets = useSafeAreaInsets();
@@ -398,7 +408,10 @@ export function Screen({
         <Txt v="title" numberOfLines={1} style={{ flexShrink: 1 }}>
           {title}
         </Txt>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>{right}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {eye ? <EyeBtn /> : null}
+          {right}
+        </View>
       </Row>
       {scroll ? (
         <ScrollView
@@ -428,8 +441,10 @@ export function Empty({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; te
 }
 
 /** Renders the small subset of Markdown that Finy is asked to write: **bold**, bullets, numbered lists. */
-export function RichText({ text, color }: { text: string; color?: string }) {
+export function RichText({ text: raw, color }: { text: string; color?: string }) {
   const { c, fs } = useUi();
+  const hide = useStore((s) => s.hideAmounts);
+  const text = hide ? maskMoney(raw) : raw;
   const fg = color ?? c.text;
   const inline = (s: string, key: string) =>
     s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>

@@ -20,13 +20,39 @@ export function currentEmail(): string | null {
   return GoogleSignin.getCurrentUser()?.user.email ?? null;
 }
 
-/** Opens Google's account picker and consent screen. Returns the connected address. */
-export async function connect(): Promise<string> {
+/**
+ * The Google account this app is already signed in with and allowed to read
+ * mail with, without showing any UI. null when there is none.
+ */
+export async function existingAccount(): Promise<string | null> {
   configure();
-  await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-  const res = await GoogleSignin.signIn();
-  if (!isSuccessResponse(res)) throw new Error('Đã huỷ đăng nhập Google.');
-  return res.data.user.email;
+  const user = GoogleSignin.getCurrentUser() ?? (await GoogleSignin.signInSilently().then((r) => (r.type === 'success' ? r.data : null)).catch(() => null));
+  if (!user || !user.scopes?.includes(SCOPE)) return null;
+  return user.user.email;
+}
+
+let pending: Promise<string> | null = null;
+
+/**
+ * Opens Google's account picker and consent screen. Returns the connected address.
+ * Only one sign-in can run at a time: the native module keeps a single pending
+ * result, so a second call while the first is open would lose the first one's answer.
+ */
+export function connect(): Promise<string> {
+  if (pending) return pending;
+  pending = (async () => {
+    configure();
+    const existing = await existingAccount();
+    if (existing) return existing;
+    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+    const res = await GoogleSignin.signIn();
+    if (!isSuccessResponse(res)) throw new Error('Đã huỷ đăng nhập Google.');
+    if (!res.data.scopes?.includes(SCOPE)) throw new Error('Chưa cấp quyền đọc Gmail. Bấm Kết nối Gmail lại và đánh dấu cho phép đọc email.');
+    return res.data.user.email;
+  })().finally(() => {
+    pending = null;
+  });
+  return pending;
 }
 
 export async function disconnect(): Promise<void> {
@@ -37,9 +63,16 @@ export async function disconnect(): Promise<void> {
     // Already revoked or offline: still sign out locally.
   }
   await GoogleSignin.signOut();
+  cachedToken = null;
 }
 
-async function token(): Promise<string> {
+// The native module answers one getTokens call at a time (a second call while
+// one is running overwrites it), and email bodies are fetched in parallel. So
+// one token request is shared, and the token is reused until Gmail rejects it.
+let cachedToken: string | null = null;
+let tokenRequest: Promise<string> | null = null;
+
+async function fetchToken(): Promise<string> {
   configure();
   if (!GoogleSignin.getCurrentUser()) {
     const silent = await GoogleSignin.signInSilently();
@@ -48,15 +81,54 @@ async function token(): Promise<string> {
   return (await GoogleSignin.getTokens()).accessToken;
 }
 
-async function api<T>(path: string, retry = true): Promise<T> {
+function token(): Promise<string> {
+  if (cachedToken) return Promise.resolve(cachedToken);
+  if (!tokenRequest) {
+    tokenRequest = fetchToken()
+      .then((t) => {
+        cachedToken = t;
+        return t;
+      })
+      .finally(() => {
+        tokenRequest = null;
+      });
+  }
+  return tokenRequest;
+}
+
+let refreshing: Promise<void> | null = null;
+
+/** Drops a token Gmail rejected so the next request gets a fresh one (once, however many requests saw it). */
+function invalidate(rejected: string): Promise<void> {
+  if (cachedToken !== rejected) return refreshing ?? Promise.resolve();
+  cachedToken = null;
+  refreshing = GoogleSignin.clearCachedAccessToken(rejected)
+    .then(() => undefined)
+    .catch(() => undefined)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function api<T>(path: string, attempt = 0): Promise<T> {
   const t = await token();
   const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${t}` } });
-  if (res.status === 401 && retry) {
-    await GoogleSignin.clearCachedAccessToken(t);
-    return api<T>(path, false);
+  if (res.status === 401 && attempt === 0) {
+    await invalidate(t);
+    return api<T>(path, 1);
   }
   if (!res.ok) {
     const body = await res.text();
+    // Too many requests at once (for example two devices syncing): wait and try again.
+    const rateLimited = res.status === 429 || (res.status === 403 && /rateLimit|quota/i.test(body));
+    if (rateLimited && attempt < 5) {
+      await wait(1000 * 2 ** attempt + Math.random() * 500);
+      return api<T>(path, attempt + 1);
+    }
+    if (rateLimited) throw new Error('Gmail đang giới hạn tốc độ đọc thư. Thử đồng bộ lại sau ít phút.');
     if (res.status === 403) throw new Error('Gmail từ chối truy cập. Kiểm tra Gmail API đã bật và tài khoản đã cấp quyền đọc thư.');
     throw new Error(`Gmail API lỗi ${res.status}: ${body.slice(0, 200)}`);
   }

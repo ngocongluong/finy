@@ -186,6 +186,8 @@ export interface AppSettings {
   gmailQuery: string;
   gmailEmail: string | null;
   lastSyncTs: number | null;
+  /** Outcome of the most recent sync, shown on the Transactions tab. */
+  lastSyncReport: { ts: number; text: string; error: boolean } | null;
   /** Overrides the key embedded at build time. */
   apiKeyOverride: string | null;
 }

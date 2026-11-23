@@ -7,7 +7,7 @@ import { Pressable, View } from 'react-native';
 import { FixedSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
 import { creditCycle, monthFlow, type Line } from '../../lib/finance';
-import { dateKey, fmtPct, monthKey, monthLabel, shiftMonth } from '../../lib/format';
+import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
 import type { FixedItem, OneOff, Tx } from '../../lib/types';
@@ -40,15 +40,14 @@ export default function MonthDetail() {
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
   const cycle = useMemo(() => creditCycle(month, statementDay), [month, statementDay]);
   const cycleTxs = useMemo(
-    () => txs.filter((t) => t.credit && t.date >= cycle.start && t.date <= cycle.end),
+    () => txs.filter((t) => t.credit && t.date >= cycle.start && t.date <= cycle.end).sort((a, b) => b.ts - a.ts),
     [txs, cycle],
   );
 
   const today = dateKey();
   const cycleOpen = today >= cycle.start && today <= cycle.end;
   const daysToStatement = cycleOpen ? daysBetween(today, cycle.end) : 0;
-  const creditCounted = flow.creditLine ? Math.max(flow.creditPlanned, flow.creditSpent) : 0;
-  const otherOut = flow.expense - creditCounted;
+  const otherOut = flow.expense - flow.creditCounted;
 
   const openLine = (l: Line) => {
     if (l.source === 'fixed') {
@@ -148,11 +147,11 @@ export default function MonthDetail() {
             <Ionicons name="card" size={20} color={c.accent} />
             <Txt v="heading">Chi tín dụng</Txt>
           </View>
-          {flow.creditLine ? <Amount value={creditCounted} /> : null}
+          <Amount value={flow.creditCounted} />
         </Row>
         <Txt v="small">
           Kỳ sao kê {shortDate(cycle.start)} – {shortDate(cycle.end)}
-          {cycleOpen ? (daysToStatement === 0 ? ' · hôm nay chốt sao kê' : ` · còn ${daysToStatement} ngày đến ngày sao kê`) : today > cycle.end ? ' · đã chốt' : ' · chưa bắt đầu'}
+          {cycleOpen ? (daysToStatement === 0 ? ' · hôm nay chốt sao kê' : ` · còn ${daysToStatement} ngày đến ngày sao kê`) : flow.creditClosed ? ' · đã chốt sổ, tính theo số thực tế' : ' · chưa bắt đầu'}
         </Txt>
 
         {flow.creditLine ? (
@@ -167,9 +166,11 @@ export default function MonthDetail() {
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
                 <Ionicons name="warning" size={18} color={c.negative} />
                 <Txt color={c.negative} style={{ flex: 1 }}>
-                  Vượt dự chi {money(flow.creditOver)}. Phần vượt đã được cộng vào tổng chi của tháng này.
+                  Vượt dự chi {money(flow.creditOver)}. Tháng này tính {money(flow.creditCounted)} cho thẻ.
                 </Txt>
               </View>
+            ) : flow.creditClosed ? (
+              <Txt v="small">Kỳ đã chốt: tháng này tính {money(flow.creditCounted)} (số thực tế) thay cho dự chi.</Txt>
             ) : (
               <Txt v="small">Còn {money(flow.creditPlanned - flow.creditSpent)} trong dự chi của kỳ này.</Txt>
             )}
@@ -182,19 +183,20 @@ export default function MonthDetail() {
           </>
         )}
 
+        <Btn label={`Xem toàn bộ ${cycleTxs.length} giao dịch của kỳ`} icon="list-outline" kind="ghost" onPress={() => router.push(`/credit?month=${month}`)} />
         {cycleTxs.length ? <View style={{ height: 1, backgroundColor: c.border }} /> : null}
-        {cycleTxs.slice(0, 60).map((t) => (
+        {cycleTxs.slice(0, 5).map((t) => (
           <Pressable key={t.id} onPress={() => setTx(t)} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 44, justifyContent: 'center' })}>
             <Row>
               <View style={{ flex: 1, marginRight: 12 }}>
                 <Txt numberOfLines={1}>{t.note}</Txt>
-                <Txt v="small">{shortDate(t.date)}{t.source === 'hsbc' ? ' · HSBC' : ' · nhập tay'}</Txt>
+                <Txt v="small">{shortDate(t.date)} {fmtTime(t.ts)}{t.source === 'hsbc' ? ' · HSBC' : ' · nhập tay'}</Txt>
               </View>
               <Amount value={t.direction === 'out' ? t.amount : -t.amount} color={t.direction === 'in' ? c.positive : c.text} />
             </Row>
           </Pressable>
         ))}
-        {cycleTxs.length > 60 ? <Txt v="small">Và {cycleTxs.length - 60} giao dịch nữa — xem ở tab Giao dịch.</Txt> : null}
+        {cycleTxs.length > 5 ? <Txt v="small">5 giao dịch gần nhất — xem toàn bộ ở nút trên.</Txt> : null}
       </Card>
 
       <View style={{ height: gap }} />

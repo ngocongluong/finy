@@ -10,13 +10,21 @@ import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
 import type { Account, AppSettings, ChatMsg, CreditCardInfo, FixedItem, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
 
+/**
+ * The address HSBC Vietnam sends card-transaction alerts from. Which senders
+ * are actually trusted is still decided on the phone from the sender domain.
+ */
+const GMAIL_QUERY = 'from:HSBC@notification.hsbc.com.hk newer_than:60d';
+const OLD_GMAIL_QUERIES = ['from:(hsbc.com.vn OR hsbc.com) newer_than:45d', 'from:hsbc newer_than:60d'];
+
 export const DEFAULT_SETTINGS: AppSettings = {
   autoLockSec: 0,
   hideAmountsOnOpen: false,
   statementDay: 14,
-  gmailQuery: 'from:(hsbc.com.vn OR hsbc.com) newer_than:45d',
+  gmailQuery: GMAIL_QUERY,
   gmailEmail: null,
   lastSyncTs: null,
+  lastSyncReport: null,
   apiKeyOverride: null,
 };
 
@@ -104,7 +112,8 @@ function fromLegacyBudgets(budgets: Record<string, MonthBudget>): FixedItem[] {
 export const useStore = create<State>((set, get) => ({
   phase: 'boot',
   loaded: false,
-  hideAmounts: false,
+  // Every amount starts hidden; the eye button reveals them until the next lock.
+  hideAmounts: true,
   ui: DEFAULT_UI,
   uiHistory: [],
   fixed: [],
@@ -147,6 +156,8 @@ export const useStore = create<State>((set, get) => ({
       const seeded = firstRun ? seedData() : null;
       const migrated = fixed === null && legacyBudgets !== null ? fromLegacyBudgets(legacyBudgets) : null;
       const mergedSettings = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
+      // A query the user never changed follows the app's current default.
+      if (OLD_GMAIL_QUERIES.includes(mergedSettings.gmailQuery)) mergedSettings.gmailQuery = GMAIL_QUERY;
       // Once: the planned card spend used to be an ordinary expense.
       const loadedFixed = fixed ?? migrated ?? seeded?.fixed ?? [];
       const allFixed = creditMarked ? loadedFixed : markCreditItem(loadedFixed);
@@ -163,20 +174,26 @@ export const useStore = create<State>((set, get) => ({
         chat: chat ?? [],
         apiHistory: apiHistory ?? [],
         txs,
-        hideAmounts: mergedSettings.hideAmountsOnOpen,
+        hideAmounts: true,
       });
       if (fixed === null || allFixed !== loadedFixed) persist('fixed', allFixed);
       if (!creditMarked) persist('creditMarked', true);
+      // Once: older versions remembered mail from untrusted senders as processed,
+      // so it would never be looked at again. Start the Gmail bookkeeping over.
+      if (!(await db.kvGet<boolean>('gmailReset1'))) {
+        await db.kvSet('gmail_skipped', []);
+        await db.kvSet('gmailReset1', true);
+      }
       if (oneOffs === null) persist('oneOffs', get().oneOffs);
       if (seeded) persist('accounts', seeded.accounts);
-    } else if (get().settings.hideAmountsOnOpen) {
+    } else {
       set({ hideAmounts: true });
     }
     set({ phase: 'ready' });
   },
 
   lock: () => {
-    if (get().phase === 'ready') set({ phase: 'locked' });
+    if (get().phase === 'ready') set({ phase: 'locked', hideAmounts: true });
   },
 
   toggleHide: () => set({ hideAmounts: !get().hideAmounts }),

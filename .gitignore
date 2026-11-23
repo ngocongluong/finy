@@ -32,3 +32,4 @@ local.properties
 
 # Real bank email sample (personal data)
 hsbc_example.md
+google-services*.json

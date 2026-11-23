@@ -59,6 +59,8 @@ export function creditSpent(txs: Tx[], cycle: CreditCycle): number {
 export interface CreditData {
   txs: Tx[];
   statementDay: number;
+  /** Today (YYYY-MM-DD); decides whether a cycle has closed. Defaults to the real date. */
+  today?: string;
 }
 
 // ---- one month ----
@@ -90,7 +92,7 @@ export interface MonthFlow {
   fixedOut: number;
   /** One-off expenses expected this month. */
   extraOut: number;
-  /** fixedOut + extraOut + creditOver. */
+  /** Fixed expenses other than the card plan, plus one-offs, plus creditCounted. */
   expense: number;
   /** The part of fixedOut that is loan repayments. */
   debtPayment: number;
@@ -98,8 +100,16 @@ export interface MonthFlow {
   creditPlanned: number;
   /** Actual card spending in the statement cycle that closes this month. */
   creditSpent: number;
-  /** Card spending beyond the plan; it is added to the month's expenses. */
+  /** Card spending beyond the plan. */
   creditOver: number;
+  /** The cycle that closes this month has closed: its actual total is final. */
+  creditClosed: boolean;
+  /**
+   * What the card costs this month in the expense total. A closed cycle counts
+   * at its actual total (it is paid with this month's salary); an open one at
+   * the plan, or at what was already spent when that is more.
+   */
+  creditCounted: number;
   /** income - expense: what can be set aside this month (negative = shortfall). */
   saving: number;
   /** expense / income. */
@@ -133,15 +143,18 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
 
   const creditLine = fixedOutLines.find((l) => l.kind === 'credit') ?? null;
   const creditPlanned = creditLine?.amount ?? 0;
-  const spent = credit ? creditSpent(credit.txs, creditCycle(month, credit.statementDay)) : 0;
+  const cycle = credit ? creditCycle(month, credit.statementDay) : null;
+  const spent = credit && cycle ? creditSpent(credit.txs, cycle) : 0;
+  const creditClosed = !!cycle && (credit?.today ?? dateKey()) > cycle.end;
   const creditOver = creditLine ? Math.max(0, spent - creditPlanned) : 0;
+  const creditCounted = creditClosed || !creditLine ? spent : Math.max(creditPlanned, spent);
 
   const fixedIn = total(fixedInLines);
   const fixedOut = total(fixedOutLines);
   const extraIn = total(extraInLines);
   const extraOut = total(extraOutLines);
   const income = fixedIn + extraIn;
-  const expense = fixedOut + extraOut + creditOver;
+  const expense = fixedOut - creditPlanned + extraOut + creditCounted;
   return {
     month,
     fixedIn,
@@ -154,6 +167,8 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     creditPlanned,
     creditSpent: spent,
     creditOver,
+    creditClosed,
+    creditCounted,
     saving: income - expense,
     spendRatio: income > 0 ? expense / income : NaN,
     savingRate: income > 0 ? (income - expense) / income : NaN,

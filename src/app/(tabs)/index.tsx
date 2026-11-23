@@ -5,13 +5,52 @@ import { Pressable, View } from 'react-native';
 import { SpendBars, Sparkline } from '../../components/charts';
 import { TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, cycleMonthOf, dailySeries, dailyStats, monthFlow, netWorth } from '../../lib/finance';
-import { dateKey, fmtDateTime, fmtPct, monthKey, monthLabel } from '../../lib/format';
+import { creditCycle, cycleMonthOf, dailySeries, dailyStats, monthFlow, netWorth, type MonthFlow } from '../../lib/finance';
+import { dateKey, fmtDateTime, fmtPct, fmtTime, monthKey, monthLabel } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { project, resolvePlan } from '../../lib/plan';
 import { useStore } from '../../lib/store';
 import { alpha, CHART, METRIC_LABELS } from '../../lib/theme';
 import type { HomeSectionId, MetricKey } from '../../lib/types';
+
+/** One statement cycle: what was spent, against the plan. Tapping opens all its transactions. */
+function CycleBox({ flow, title, statementDay }: { flow: MonthFlow; title: string; statementDay: number }) {
+  const { c, r } = useUi();
+  const money = useMoney();
+  const cyc = creditCycle(flow.month, statementDay);
+  const sd = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
+  const hasPlan = flow.creditLine !== null;
+  return (
+    <Pressable
+      onPress={() => router.push(`/credit?month=${flow.month}`)}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}, từ ${sd(cyc.start)} đến ${sd(cyc.end)}. Chạm để xem toàn bộ giao dịch.`}
+      style={({ pressed }) => ({ backgroundColor: c.cardAlt, borderRadius: Math.min(r, 14), padding: 12, gap: 8, opacity: pressed ? 0.75 : 1 })}>
+      <Row>
+        <Txt v="label" color={c.text}>{title}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Txt v="small">{sd(cyc.start)} – {sd(cyc.end)}</Txt>
+          <Ionicons name="chevron-forward" size={14} color={c.muted} />
+        </View>
+      </Row>
+      <Amount v="title" value={flow.creditSpent} color={flow.creditOver > 0 ? c.negative : c.text} />
+      {hasPlan ? (
+        <>
+          <Meter ratio={flow.creditPlanned > 0 ? flow.creditSpent / flow.creditPlanned : flow.creditSpent > 0 ? 1 : 0} color={flow.creditOver > 0 ? c.negative : c.accent} />
+          <Row>
+            <Txt v="small">Dự chi {money(flow.creditPlanned)}</Txt>
+            <Txt v="small" color={flow.creditOver > 0 ? c.negative : c.muted}>
+              {flow.creditOver > 0 ? `Vượt ${money(flow.creditOver)}` : flow.creditClosed ? `Thấp hơn ${money(flow.creditPlanned - flow.creditSpent)}` : `Còn ${money(flow.creditPlanned - flow.creditSpent)}`}
+            </Txt>
+          </Row>
+        </>
+      ) : (
+        <Txt v="small">Chưa đặt dự chi tín dụng.</Txt>
+      )}
+      {flow.creditClosed ? <Txt v="small">Tính vào chi {monthLabel(flow.month).toLowerCase()} theo số thực tế.</Txt> : null}
+    </Pressable>
+  );
+}
 
 export default function Home() {
   const { c, gap } = useUi();
@@ -33,6 +72,12 @@ export default function Home() {
   // The statement cycle open today (it may close next month), compared with the plan.
   const cycle = useMemo(() => creditCycle(cycleMonthOf(today, statementDay), statementDay), [today, statementDay]);
   const card = useMemo(() => monthFlow(budget, cycle.month, credit), [budget, credit, cycle.month]);
+  // From the day after the statement day, the cycle that closed this month is shown too:
+  // its total is final and is paid with this month's salary.
+  const closedCard = useMemo(
+    () => (cycle.month !== month ? monthFlow(budget, month, credit) : null),
+    [budget, credit, cycle.month, month],
+  );
   const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
   const daily = useMemo(() => dailyStats(sum.dailyBucket, txs, today), [sum.dailyBucket, txs, today]);
   // This month's expenses, largest first, at the amounts that apply this month.
@@ -73,7 +118,10 @@ export default function Home() {
     today: (
       <Card key="today" style={{ gap }}>
         <Row>
-          <Txt v="label">{over ? 'Hôm nay đã vượt hạn mức' : 'Hôm nay còn tiêu được'}</Txt>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+            <Txt v="label">{over ? 'Hôm nay đã vượt hạn mức' : 'Hôm nay còn tiêu được'}</Txt>
+            <IconBtn name="add-circle" size={24} color={c.accent} onPress={() => setAddOpen(true)} label="Nhập chi tiêu" />
+          </View>
           <Txt v="small">còn {daily.daysLeft} ngày trong tháng</Txt>
         </Row>
         {daily.bucket > 0 ? (
@@ -88,7 +136,6 @@ export default function Home() {
         ) : (
           <Txt v="label">Chưa có quỹ chi tiêu hằng ngày. Vào Ngân sách → Cố định, mở một khoản chi và bật “quỹ chi tiêu hằng ngày”.</Txt>
         )}
-        <Btn label="Nhập chi tiêu" icon="add" onPress={() => setAddOpen(true)} />
         <View style={{ gap: 6 }}>
           <Txt v="small">Chi tiêu 14 ngày gần nhất</Txt>
           <SpendBars data={series} allowance={daily.baseAllowance} />
@@ -102,32 +149,14 @@ export default function Home() {
       </Card>
     ),
     credit:
-      card.creditLine || card.creditSpent > 0 ? (
-        <Card key="credit" style={{ gap: 10 }} onPress={() => router.push(`/month/${cycle.month}`)}>
-          <Row>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Ionicons name="card" size={18} color={c.accent} />
-              <Txt v="heading">Thẻ tín dụng</Txt>
-            </View>
-            <Txt v="small">kỳ {shortDate(cycle.start)} – {shortDate(cycle.end)}</Txt>
-          </Row>
-          <Row>
-            <Txt v="label">Đã xài kỳ này</Txt>
-            <Amount v="title" value={card.creditSpent} color={card.creditOver > 0 ? c.negative : c.text} />
-          </Row>
-          {card.creditLine ? (
-            <>
-              <Meter ratio={card.creditPlanned > 0 ? card.creditSpent / card.creditPlanned : card.creditSpent > 0 ? 1 : 0} color={card.creditOver > 0 ? c.negative : c.accent} />
-              <Row>
-                <Txt v="small">Dự chi {money(card.creditPlanned)}</Txt>
-                <Txt v="small" color={card.creditOver > 0 ? c.negative : c.muted}>
-                  {card.creditOver > 0 ? `Vượt ${money(card.creditOver)}` : `Còn ${money(card.creditPlanned - card.creditSpent)}`}
-                </Txt>
-              </Row>
-            </>
-          ) : (
-            <Txt v="small">Chưa đặt dự chi tín dụng — chạm để đặt.</Txt>
-          )}
+      card.creditLine || card.creditSpent > 0 || (closedCard && closedCard.creditSpent > 0) ? (
+        <Card key="credit" style={{ gap: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="card" size={18} color={c.accent} />
+            <Txt v="heading">Thẻ tín dụng</Txt>
+          </View>
+          {closedCard ? <CycleBox flow={closedCard} title="Kỳ trước · đã chốt sổ" statementDay={statementDay} /> : null}
+          <CycleBox flow={card} title={closedCard ? 'Kỳ này' : 'Kỳ hiện tại'} statementDay={statementDay} />
           {creditCard ? (
             <Txt v="small">
               Dư nợ {money(creditCard.balance)} · còn khả dụng {money(creditCard.available)} (HSBC báo lúc {fmtDateTime(creditCard.asOf)})
@@ -186,7 +215,7 @@ export default function Home() {
             <Row key={t.id}>
               <View style={{ flex: 1, marginRight: 12 }}>
                 <Txt numberOfLines={1}>{t.note}</Txt>
-                <Txt v="small">{t.date.slice(8, 10)}/{t.date.slice(5, 7)} · {t.source === 'hsbc' ? 'HSBC' : 'Nhập tay'}</Txt>
+                <Txt v="small">{t.date.slice(8, 10)}/{t.date.slice(5, 7)} {fmtTime(t.ts)} · {t.source === 'hsbc' ? 'HSBC' : 'Nhập tay'}</Txt>
               </View>
               <Amount value={t.direction === 'out' ? -t.amount : t.amount} color={t.direction === 'in' ? c.positive : c.text} signed />
             </Row>
@@ -235,7 +264,6 @@ export default function Home() {
       title={ui.title}
       right={
         <>
-          <IconBtn name={hide ? 'eye-off-outline' : 'eye-outline'} onPress={toggleHide} label={hide ? 'Hiện số tiền' : 'Ẩn số tiền'} />
           <IconBtn name="settings-outline" onPress={() => router.push('/settings')} label="Cài đặt" />
         </>
       }>
