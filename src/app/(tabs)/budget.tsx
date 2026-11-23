@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, FixedSheet, InstalmentSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
 import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, monthFlow, netWorth } from '../../lib/finance';
@@ -38,7 +38,12 @@ export default function Budget() {
 
   const now = monthKey();
   const [view, setView] = useState<View3>('table');
-  const [count, setCount] = useState(6);
+  // What the table covers: the next n months, or one calendar year (this year and the next 29).
+  const [period, setPeriod] = useState<{ kind: 'next'; months: number } | { kind: 'year'; year: number }>({ kind: 'next', months: 6 });
+  const thisYear = Number(now.slice(0, 4));
+  const years = Array.from({ length: 30 }, (_, i) => thisYear + i);
+  const start = period.kind === 'year' ? `${period.year}-01` : now;
+  const count = period.kind === 'year' ? 12 : period.months;
   // `open` is separate from the payload so a sheet keeps its content while it animates closed.
   const [fixedSheet, setFixedSheetState] = useState<{ open: boolean; direction: 'in' | 'out'; item: FixedItem | null }>({ open: false, direction: 'out', item: null });
   const setFixedSheet = (v: { direction: 'in' | 'out'; item: FixedItem | null } | null) =>
@@ -50,7 +55,7 @@ export default function Budget() {
   // The statement cycle open today: instalment progress is shown against it.
   const cycleMonth = cycleMonthOf(dateKey(), statementDay);
 
-  const rows = useMemo(() => flowTable(budget, now, count, credit), [budget, credit, now, count]);
+  const rows = useMemo(() => flowTable(budget, start, count, credit), [budget, credit, start, count]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
   const last = rows[rows.length - 1];
   const sumIn = rows.reduce((s, r) => s + r.income, 0);
@@ -84,11 +89,14 @@ export default function Budget() {
             </Card>
           ) : null}
 
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {[6, 12, 24].map((n) => (
-              <Chip key={n} label={`${n} tháng`} active={count === n} onPress={() => setCount(n)} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
+            {[6, 12].map((n) => (
+              <Chip key={n} label={`${n} tháng tới`} active={period.kind === 'next' && period.months === n} onPress={() => setPeriod({ kind: 'next', months: n })} />
             ))}
-          </View>
+            {years.map((y) => (
+              <Chip key={y} label={String(y)} active={period.kind === 'year' && period.year === y} onPress={() => setPeriod({ kind: 'year', year: y })} />
+            ))}
+          </ScrollView>
 
           <Card eye={'budget.table'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
@@ -130,7 +138,7 @@ export default function Budget() {
             })}
             <View style={{ height: 1, backgroundColor: c.border, marginVertical: 8 }} />
             <Row>
-              <Txt v="label" style={{ width: 66 }}>Tổng</Txt>
+              <Txt v="label" style={{ width: 66 }}>{period.kind === 'year' ? `Cả ${period.year}` : 'Tổng'}</Txt>
               <Txt v="num" style={cell} numberOfLines={1}>{money(sumIn, true)}</Txt>
               <Txt v="num" style={cell} numberOfLines={1}>{money(sumOut, true)}</Txt>
               <Txt v="num" style={cell} numberOfLines={1} color={last.cumulative < 0 ? c.negative : c.positive}>{money(last.cumulative, true)}</Txt>
