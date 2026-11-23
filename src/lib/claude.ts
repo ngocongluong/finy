@@ -5,7 +5,7 @@ import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
 import Constants from 'expo-constants';
 import { Alert } from 'react-native';
 import { z } from 'zod';
-import { creditCycle, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, monthFlow, netWorth } from './finance';
+import { annuityPayment, creditCycle, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
 import { dateKey, fmtTime, fmtVND, monthKey, monthLabel, uid } from './format';
 import { project, resolvePlan } from './plan';
 import { useStore } from './store';
@@ -39,7 +39,7 @@ export function describeError(e: unknown): string {
 const SYSTEM = `Bạn là Finy, trợ lý tài chính cá nhân sống trong một ứng dụng Android riêng tư, chỉ có một người dùng duy nhất tại Việt Nam. Người dùng tự xây app này để quản lý tiền của chính mình: bảng thu chi hàng tháng, chi tiêu hằng ngày (nhập tay và giao dịch HSBC lấy từ email), tổng tiền hiện có, và kế hoạch tài chính 5–10 năm.
 
 Bảng thu chi
-App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định.
+App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khoản vay ngân hàng được nhập riêng (số tiền vay, lãi suất, số tháng, tháng trả đầu tiên); app tính số trả mỗi tháng theo kiểu trả góp đều và cộng vào chi cố định trong thời gian vay. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định.
 
 Thẻ tín dụng
 Một khoản chi cố định có thể được đánh dấu là "dự chi tín dụng": số tiền người dùng dự định quẹt thẻ mỗi kỳ sao kê. Kỳ sao kê kết thúc vào ngày sao kê hàng tháng và được tính vào tháng có ngày sao kê đó (ví dụ ngày sao kê 14: kỳ 15/11–14/12 thuộc tháng 12). Kỳ chốt vào ngày sao kê của tháng nào thì được trả bằng lương tháng đó. Khi kỳ còn mở, chi của tháng tính theo dự chi (hoặc số đã quẹt nếu nhiều hơn); khi kỳ đã chốt, chi của tháng tính theo đúng số đã quẹt, thay cho dự chi. Giao dịch thẻ lấy từ email HSBC. Các khoản trả góp qua thẻ (người dùng nhập tổng tiền và số tháng) được chia đều và cộng một phần vào mỗi kỳ. Nếu số đã quẹt trong kỳ vượt dự chi, hãy nói rõ cho người dùng biết họ đang vượt bao nhiêu.
@@ -221,6 +221,44 @@ function buildTools(log: (action: string) => void) {
         if (!(await confirmAsync('Xoá khoản trả góp?', `Finy muốn xoá "${p.name}" (${fmtVND(p.total)} / ${p.months} tháng).`))) return 'The user declined the deletion.';
         s().deleteInstalment(i.id);
         log(`Đã xoá trả góp "${p.name}"`);
+        return 'Deleted.';
+      },
+    }),
+    betaZodTool({
+      name: 'set_loan',
+      description:
+        'Create or edit a bank loan repaid in equal monthly payments (principal + interest). The app calculates the payment from principal, annual rate and number of months, and adds it to the fixed monthly expenses from start_month until the last payment. payment_override is the amount the bank actually charges when it differs from the calculation; it is cleared automatically when principal, rate or months change unless sent again. Pass id to edit (ids in the snapshot under cashFlow.loans).',
+      inputSchema: z.object({
+        id: z.string().optional(),
+        name: z.string().describe('e.g. "Vay mua nhà"'),
+        principal: z.number().describe('Amount borrowed, VND'),
+        rate_pct: z.number().min(0).max(100).describe('Annual interest rate in percent'),
+        months: z.number().int().min(1).max(600),
+        start_month: z.string().regex(/^\d{4}-\d{2}$/).describe('Month of the first payment (YYYY-MM); may be in the past'),
+        payment_override: z.number().nullable().optional(),
+      }),
+      run: (i) => {
+        const cur = i.id ? s().loans.find((x) => x.id === i.id) : undefined;
+        if (i.id && !cur) return `No loan with id ${i.id}.`;
+        if (!(i.principal > 0)) return 'principal must be positive.';
+        const termsChanged = !cur || cur.principal !== i.principal || cur.ratePct !== i.rate_pct || cur.months !== i.months;
+        const override = i.payment_override !== undefined ? i.payment_override : termsChanged ? null : cur!.paymentOverride;
+        const l = s().upsertLoan({ id: i.id, name: i.name, principal: i.principal, ratePct: i.rate_pct, months: i.months, startMonth: i.start_month, paymentOverride: override });
+        const pay = loanPayment(l);
+        log(`${i.id ? 'Đã sửa' : 'Đã thêm'} khoản vay "${l.name}": trả ${fmtVND(pay)}/tháng`);
+        return `Saved ${JSON.stringify({ ...l, monthlyPayment: pay, calculatedPayment: annuityPayment(l.principal, l.ratePct, l.months) })}`;
+      },
+    }),
+    betaZodTool({
+      name: 'delete_loan',
+      description: 'Delete a bank loan. The app asks the user to confirm.',
+      inputSchema: z.object({ id: z.string() }),
+      run: async (i) => {
+        const l = s().loans.find((x) => x.id === i.id);
+        if (!l) return `No loan with id ${i.id}.`;
+        if (!(await confirmAsync('Xoá khoản vay?', `Finy muốn xoá "${l.name}".`))) return 'The user declined the deletion.';
+        s().deleteLoan(i.id);
+        log(`Đã xoá khoản vay "${l.name}"`);
         return 'Deleted.';
       },
     }),
@@ -421,7 +459,7 @@ function buildTools(log: (action: string) => void) {
         s().setPlan(patch);
         log('Đã cập nhật kế hoạch dài hạn');
         const st = s();
-        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments }, st.accounts, monthKey()));
+        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans }, st.accounts, monthKey()));
         return `Saved. New base projection (net worth by year): ${JSON.stringify(proj.rows.map((r) => [r.year, Math.round(r.netWorth)]))}`;
       },
     }),
@@ -433,7 +471,7 @@ export function snapshot(): string {
   const st = useStore.getState();
   const today = dateKey();
   const month = monthKey();
-  const budget = { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments };
+  const budget = { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans };
   const credit = { txs: st.txs, statementDay: st.settings.statementDay };
   const flow = monthFlow(budget, month, credit);
   const daily = dailyStats(flow.dailyBucket, st.txs, today);
@@ -451,6 +489,14 @@ export function snapshot(): string {
     month,
     cashFlow: {
       fixed: st.fixed,
+      // Bank loans: payment per month (calculated, or the bank's figure), payments made and balance owed now.
+      loans: st.loans.map((l) => ({
+        ...l,
+        monthlyPayment: loanPayment(l),
+        calculatedPayment: annuityPayment(l.principal, l.ratePct, l.months),
+        paymentsMade: loanPaidBefore(l, month),
+        balanceNow: loanBalance(l, loanPaidBefore(l, month)),
+      })),
       // Amounts that replace a fixed item's usual amount in one month: { month: { fixedItemId: amount } }
       monthAdjustments: Object.fromEntries(Object.entries(st.overrides).filter(([m]) => m >= month)),
       // One-offs from this month onward; older ones no longer affect the table.

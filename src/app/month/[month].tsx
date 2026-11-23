@@ -4,13 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { FixedSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
+import { FixedSheet, LoanSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
 import { creditCycle, monthFlow, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
-import type { FixedItem, OneOff, Tx } from '../../lib/types';
+import type { FixedItem, Loan, OneOff, Tx } from '../../lib/types';
 
 const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
 
@@ -34,6 +34,7 @@ export default function MonthDetail() {
   const [fixedEdit, setFixedEdit] = useState<{ open: boolean; item: FixedItem | null }>({ open: false, item: null });
   const [oneOff, setOneOff] = useState<{ open: boolean; item: OneOff | null; direction: 'in' | 'out' }>({ open: false, item: null, direction: 'out' });
   const [creditSetup, setCreditSetup] = useState(false);
+  const [loanEdit, setLoanEdit] = useState<{ open: boolean; item: Loan | null }>({ open: false, item: null });
   const [tx, setTx] = useState<Tx | undefined>(undefined);
 
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
@@ -51,6 +52,9 @@ export default function MonthDetail() {
     if (l.source === 'fixed') {
       const item = budget.fixed.find((f) => f.id === l.id);
       if (item) setFixedEdit({ open: true, item });
+    } else if (l.source === 'loan') {
+      const item = (budget.loans ?? []).find((x) => x.id === l.id);
+      if (item) setLoanEdit({ open: true, item });
     } else {
       const item = budget.oneOffs.find((o) => o.id === l.id);
       if (item) setOneOff({ open: true, item, direction: item.direction });
@@ -68,6 +72,8 @@ export default function MonthDetail() {
           <Txt v="small" color={l.overridden ? c.accent : c.muted}>
             {l.source === 'oneoff'
               ? 'Phát sinh'
+              : l.source === 'loan'
+                ? 'Vay ngân hàng · trả góp đều'
               : l.overridden
                 ? `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`
                 : l.kind === 'debt'
@@ -223,6 +229,7 @@ export default function MonthDetail() {
         defaultDirection={oneOff.direction}
       />
       <FixedSheet visible={creditSetup} onClose={() => setCreditSetup(false)} direction="out" initialKind="credit" />
+      <LoanSheet visible={loanEdit.open} onClose={() => setLoanEdit((v) => ({ ...v, open: false }))} item={loanEdit.item} />
       <TxSheet visible={tx !== undefined} onClose={() => setTx(undefined)} tx={tx} />
     </Screen>
   );

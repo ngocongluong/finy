@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { monthFlow, netWorth, type Budget } from './finance';
+import { loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -43,7 +43,13 @@ export function resolvePlan(plan: PlanParams, budget: Budget, accounts: Account[
   const base = monthFlow({ fixed, oneOffs: [], overrides: {} }, currentMonth);
   const fixedDebts: PlanDebt[] = fixed
     .filter((f) => f.direction === 'out' && f.kind === 'debt' && f.amount > 0)
-    .map((f) => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }));
+    .map((f): PlanDebt => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }))
+    // Bank loans are known exactly: what is still owed now, the rate and the payment.
+    .concat(
+      (budget.loans ?? [])
+        .filter((l) => loanPaidBefore(l, currentMonth) < l.months)
+        .map((l) => ({ id: l.id, name: l.name, balance: loanBalance(l, loanPaidBefore(l, currentMonth)), ratePct: l.ratePct, monthlyPayment: loanPayment(l) })),
+    );
   const years = Math.min(10, Math.max(5, Math.round(plan.years)));
 
   const extraByMonth: Record<number, number> = {};

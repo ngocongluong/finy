@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { ACCOUNT_KINDS, AccountSheet, FixedSheet, InstalmentSheet } from '../../components/sheets';
+import { ACCOUNT_KINDS, AccountSheet, FixedSheet, InstalmentSheet, LoanSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
-import type { Account, FixedItem, Instalment } from '../../lib/types';
+import type { Account, FixedItem, Instalment, Loan } from '../../lib/types';
 
 type View3 = 'table' | 'fixed' | 'accounts';
 
@@ -51,6 +51,8 @@ export default function Budget() {
   const [account, setAccount] = useState<Account | null | undefined>(undefined);
   const [inst, setInst] = useState<{ open: boolean; item: Instalment | null }>({ open: false, item: null });
   const instalments = useStore((s) => s.instalments);
+  const loans = useStore((s) => s.loans);
+  const [loan, setLoan] = useState<{ open: boolean; item: Loan | null }>({ open: false, item: null });
   const statementDay = useStore((s) => s.settings.statementDay);
   // The statement cycle open today: instalment progress is shown against it.
   const cycleMonth = cycleMonthOf(dateKey(), statementDay);
@@ -183,6 +185,27 @@ export default function Budget() {
             <Btn label="Thêm khoản chi" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'out', item: null })} />
           </Card>
 
+          <Card eye={'budget.loans'} style={{ gap: 2 }}>
+            <Row style={{ marginBottom: 6 }}>
+              <Txt v="heading">Vay ngân hàng</Txt>
+              <Amount value={loans.reduce((s, l) => s + (loanPart(l, now) ? loanPayment(l) : 0), 0)} color={c.muted} />
+            </Row>
+            {loans.length === 0 ? (
+              <Txt v="label">Chưa có khoản vay nào. Nhập số tiền vay, lãi suất và thời hạn, Finy tự tính số trả mỗi tháng và cộng vào chi cố định.</Txt>
+            ) : null}
+            {loans.map((l) => {
+              const paid = loanPaidBefore(l, now);
+              const running = loanPart(l, now) !== null;
+              const sub = running
+                ? `${String(l.ratePct).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}`
+                : now < l.startMonth
+                  ? `Bắt đầu trả ${monthLabel(l.startMonth).toLowerCase()}`
+                  : 'Đã trả xong';
+              return <Line key={l.id} name={l.name} sub={sub} amount={loanPayment(l)} color={running ? c.text : c.muted} onPress={() => setLoan({ open: true, item: l })} />;
+            })}
+            <Btn label="Thêm khoản vay" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setLoan({ open: true, item: null })} />
+          </Card>
+
           <Card eye={'budget.instalments'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="heading">Trả góp qua thẻ</Txt>
@@ -250,6 +273,7 @@ export default function Budget() {
       <View style={{ height: gap }} />
       <FixedSheet visible={fixedSheet.open} onClose={() => setFixedSheet(null)} direction={fixedSheet.direction} item={fixedSheet.item} />
       <AccountSheet visible={account !== undefined} onClose={() => setAccount(undefined)} account={account} />
+      <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} />
       <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />
     </Screen>
   );

@@ -1,10 +1,10 @@
 // Add / edit forms, shared by several screens.
 import React, { useEffect, useState } from 'react';
 import { Alert, Switch, View } from 'react-native';
-import { instalmentAmount } from '../lib/finance';
+import { annuityPayment, instalmentAmount, loanBalance, loanPaidBefore, loanPayment, loanTotalInterest } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, FixedItem, Instalment, OneOff, Tx } from '../lib/types';
+import type { Account, AccountKind, FixedItem, Instalment, Loan, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -636,6 +636,204 @@ export function InstalmentSheet({
           icon="trash-outline"
           onPress={() =>
             confirmDelete(`khoản trả góp "${item.name}"`, () => {
+              remove(item.id);
+              onClose();
+            })
+          }
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
+const LOAN_YEARS = [5, 10, 15, 20, 25, 30, 35];
+
+/**
+ * Add or edit a bank loan. The monthly payment is calculated from amount,
+ * rate and term (equal payments of principal + interest) and follows every
+ * change; the bank's own figure can be entered when it differs, and is
+ * dropped as soon as amount, rate or term change.
+ */
+export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClose: () => void; item?: Loan | null }) {
+  const { c } = useUi();
+  const money = useMoney();
+  const upsert = useStore((s) => s.upsertLoan);
+  const remove = useStore((s) => s.deleteLoan);
+  const [name, setName] = useState('');
+  const [principal, setPrincipal] = useState(0);
+  const [rateText, setRateText] = useState('');
+  const [months, setMonths] = useState(360);
+  const [monthsText, setMonthsText] = useState('360');
+  const [start, setStart] = useState(monthKey());
+  const [override, setOverride] = useState<number | null>(null);
+  const [useOverride, setUseOverride] = useState(false);
+  const [key, setKey] = useState(0);
+  const [overrideKey, setOverrideKey] = useState(0);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    setName(item?.name ?? '');
+    setPrincipal(item?.principal ?? 0);
+    setRateText(item ? String(item.ratePct).replace('.', ',') : '');
+    setMonths(item?.months ?? 360);
+    setMonthsText(String(item?.months ?? 360));
+    setStart(item?.startMonth ?? monthKey());
+    setOverride(item?.paymentOverride ?? null);
+    setUseOverride(item?.paymentOverride != null);
+    setNote(null);
+    setKey((k) => k + 1);
+    setOverrideKey((k) => k + 1);
+  }, [visible, item]);
+
+  const ratePct = parseFloat(rateText.replace(',', '.'));
+  // Changing amount, rate or term means a new calculation: the bank's old figure no longer applies.
+  const termsChanged = () => {
+    if (useOverride) {
+      setUseOverride(false);
+      setOverride(null);
+      setNote('Đã bỏ số trả theo ngân hàng vì thông tin khoản vay thay đổi.');
+    }
+  };
+
+  const valid = name.trim() && principal > 0 && Number.isFinite(ratePct) && ratePct >= 0 && months >= 1;
+  const draft: Loan = {
+    id: item?.id ?? '',
+    name,
+    principal,
+    ratePct: Number.isFinite(ratePct) ? ratePct : 0,
+    months,
+    startMonth: start,
+    paymentOverride: useOverride && override ? override : null,
+  };
+  const calculated = valid ? annuityPayment(principal, draft.ratePct, months) : 0;
+  const payment = valid ? loanPayment(draft) : 0;
+  const paid = loanPaidBefore(draft, monthKey());
+  const end = shiftMonth(start, months - 1);
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={item ? 'Sửa khoản vay' : 'Thêm khoản vay ngân hàng'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!valid}
+          onPress={() => {
+            upsert({ id: item?.id, name, principal, ratePct: draft.ratePct, months, startMonth: start, paymentOverride: draft.paymentOverride });
+            onClose();
+          }}
+        />
+      }>
+      <Field label="Tên khoản vay" value={name} onChangeText={setName} placeholder="Vay mua nhà, vay mua xe…" autoFocus={!item} />
+      <AmountField
+        key={`p${key}`}
+        label="Số tiền vay"
+        value={principal}
+        onChange={(n) => {
+          setPrincipal(n);
+          termsChanged();
+        }}
+      />
+      <Field
+        label="Lãi suất (%/năm)"
+        value={rateText}
+        placeholder="6"
+        onChangeText={(t) => {
+          setRateText(t.replace(/[^0-9.,]/g, ''));
+          termsChanged();
+        }}
+      />
+      <View style={{ gap: 8 }}>
+        <Txt v="label">Thời hạn vay</Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {LOAN_YEARS.map((y) => (
+            <Chip
+              key={y}
+              label={`${y} năm`}
+              active={months === y * 12}
+              onPress={() => {
+                setMonths(y * 12);
+                setMonthsText(String(y * 12));
+                termsChanged();
+              }}
+            />
+          ))}
+        </View>
+        <Field
+          label="Hoặc nhập số tháng"
+          value={monthsText}
+          onChangeText={(t) => {
+            const digits = t.replace(/\D/g, '').slice(0, 3);
+            setMonthsText(digits);
+            const n = parseInt(digits, 10);
+            if (n >= 1 && n <= 600) {
+              setMonths(n);
+              termsChanged();
+            }
+          }}
+        />
+      </View>
+      <View style={{ gap: 6 }}>
+        <Txt v="label">Tháng trả kỳ đầu tiên</Txt>
+        <Row>
+          <IconBtn name="play-back" onPress={() => setStart(shiftMonth(start, -12))} label="Lùi 1 năm" />
+          <IconBtn name="chevron-back" onPress={() => setStart(shiftMonth(start, -1))} label="Lùi 1 tháng" />
+          <Txt v="heading">{monthLabel(start)}</Txt>
+          <IconBtn name="chevron-forward" onPress={() => setStart(shiftMonth(start, 1))} label="Tới 1 tháng" />
+          <IconBtn name="play-forward" onPress={() => setStart(shiftMonth(start, 12))} label="Tới 1 năm" />
+        </Row>
+      </View>
+
+      {valid ? (
+        <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 6 }}>
+          <Row>
+            <Txt v="label">Trả mỗi tháng</Txt>
+            <Txt v="title">{money(payment)}</Txt>
+          </Row>
+          {useOverride && override ? <Txt v="small">Theo ngân hàng. Tính theo trả góp đều: {money(calculated)}.</Txt> : <Txt v="small">Gốc + lãi chia đều mỗi tháng.</Txt>}
+          <Row>
+            <Txt v="small">Tổng lãi cả khoản vay</Txt>
+            <Txt v="small">{money(loanTotalInterest(draft))}</Txt>
+          </Row>
+          <Row>
+            <Txt v="small">Kỳ cuối</Txt>
+            <Txt v="small">{monthLabel(end)}</Txt>
+          </Row>
+          {paid > 0 ? (
+            <Row>
+              <Txt v="small">Đã trả {Math.min(paid, months)}/{months} kỳ · dư nợ còn</Txt>
+              <Txt v="small">{money(loanBalance(draft, paid))}</Txt>
+            </Row>
+          ) : null}
+        </View>
+      ) : null}
+
+      <Toggle
+        label="Ngân hàng tính số trả khác"
+        hint="Bật nếu số trả thực tế khác số tính ở trên (ngân hàng tính lãi theo ngày, có phí, bảo hiểm…)."
+        value={useOverride}
+        onChange={(v) => {
+          setUseOverride(v);
+          setNote(null);
+          if (v && !override) {
+            setOverride(calculated || null);
+            setOverrideKey((k) => k + 1);
+          }
+        }}
+      />
+      {useOverride ? <AmountField key={`o${overrideKey}`} label="Số trả mỗi tháng theo ngân hàng" value={override ?? 0} onChange={(n) => setOverride(n || null)} /> : null}
+      {note ? <Txt v="small" color={c.warning}>{note}</Txt> : null}
+
+      {item ? (
+        <Btn
+          label="Xoá khoản vay"
+          kind="danger"
+          icon="trash-outline"
+          onPress={() =>
+            confirmDelete(`khoản vay "${item.name}"`, () => {
               remove(item.id);
               onClose();
             })

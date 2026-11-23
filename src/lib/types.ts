@@ -32,6 +32,25 @@ export interface OneOff {
   direction: 'in' | 'out';
 }
 
+/** A bank loan repaid in equal monthly instalments (annuity: principal + interest). */
+export interface Loan {
+  id: string;
+  name: string;
+  /** Amount borrowed, VND. */
+  principal: number;
+  /** Annual interest rate in percent. */
+  ratePct: number;
+  /** Number of monthly payments. */
+  months: number;
+  /** Month (YYYY-MM) of the first payment. */
+  startMonth: string;
+  /**
+   * The payment the bank actually charges, when it differs from the
+   * calculated one (day-count interest, fees). null = use the calculation.
+   */
+  paymentOverride: number | null;
+}
+
 /** A purchase paid off on the credit card in equal monthly parts. */
 export interface Instalment {
   id: string;

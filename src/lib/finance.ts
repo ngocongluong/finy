@@ -1,7 +1,7 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FixedItem, Instalment, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
@@ -10,13 +10,55 @@ export interface Budget {
   overrides: Overrides;
   /** Card instalment plans; optional so older callers and tests stay valid. */
   instalments?: Instalment[];
+  /** Bank loans; their monthly payment is a fixed expense while they run. */
+  loans?: Loan[];
 }
 
-const monthsBetween = (from: string, to: string) => {
+// ---- bank loans (annuity) ----
+
+/** Monthly payment that repays `principal` over `months` at `ratePct` a year, interest charged monthly on the balance. */
+export function annuityPayment(principal: number, ratePct: number, months: number): number {
+  const n = Math.max(1, Math.round(months));
+  const r = ratePct / 100 / 12;
+  if (r <= 0) return Math.round(principal / n);
+  return Math.round((principal * r) / (1 - Math.pow(1 + r, -n)));
+}
+
+/** The calculated payment, or the bank's own figure when one was entered. */
+export function loanPayment(l: Loan): number {
+  return l.paymentOverride ?? annuityPayment(l.principal, l.ratePct, l.months);
+}
+
+/** Which payment of the loan falls in a month (1-based), or null when none does. */
+export function loanPart(l: Loan, month: string): number | null {
+  const i = monthsBetween(l.startMonth, month);
+  return i >= 0 && i < l.months ? i + 1 : null;
+}
+
+/** Outstanding balance after `paid` payments (calculated, never below zero). */
+export function loanBalance(l: Loan, paid: number): number {
+  const r = l.ratePct / 100 / 12;
+  const p = loanPayment(l);
+  const k = Math.min(Math.max(0, paid), l.months);
+  const b = r <= 0 ? l.principal - p * k : l.principal * Math.pow(1 + r, k) - (p * (Math.pow(1 + r, k) - 1)) / r;
+  return Math.max(0, Math.round(b));
+}
+
+/** Payments made before `month` (the payment due in `month` itself not included). */
+export function loanPaidBefore(l: Loan, month: string): number {
+  return Math.min(l.months, Math.max(0, monthsBetween(l.startMonth, month)));
+}
+
+/** Total interest over the life of the loan. */
+export function loanTotalInterest(l: Loan): number {
+  return Math.max(0, loanPayment(l) * l.months - l.principal);
+}
+
+function monthsBetween(from: string, to: string): number {
   const [y1, m1] = from.split('-').map(Number);
   const [y2, m2] = to.split('-').map(Number);
   return (y2 - y1) * 12 + (m2 - m1);
-};
+}
 
 /** Which part of the plan falls in a statement month (1-based), or null when none does. */
 export function instalmentPart(p: Instalment, month: string): number | null {
@@ -108,7 +150,7 @@ export interface CreditData {
 
 /** One line of a month's income or expenses. */
 export interface Line {
-  source: 'fixed' | 'oneoff';
+  source: 'fixed' | 'oneoff' | 'loan';
   id: string;
   name: string;
   /** Amount counted in this month. */
@@ -200,7 +242,13 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   const creditCounted = creditClosed || !creditLine ? spent : Math.max(creditPlanned, spent);
 
   const fixedIn = total(fixedInLines);
-  const fixedOut = total(fixedOutLines);
+  // Bank loans: a fixed loan repayment in each month they run.
+  const loanLines: Line[] = [];
+  for (const l of b.loans ?? []) {
+    const part = loanPart(l, month);
+    if (part !== null) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: loanPayment(l), kind: 'debt' });
+  }
+  const fixedOut = total(fixedOutLines) + total(loanLines);
   const extraIn = total(extraInLines);
   const extraOut = total(extraOutLines);
   const income = fixedIn + extraIn;
@@ -213,7 +261,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     fixedOut,
     extraOut,
     expense,
-    debtPayment: total(fixedOutLines.filter((l) => l.kind === 'debt')),
+    debtPayment: total(fixedOutLines.filter((l) => l.kind === 'debt')) + total(loanLines),
     creditPlanned,
     creditSpent: spent,
     creditOver,
@@ -225,7 +273,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     dailyBucket: total(fixedOutLines.filter((l) => l.daily)),
     adjusted: [...fixedInLines, ...fixedOutLines].some((l) => l.overridden),
     incomeLines: [...fixedInLines, ...extraInLines],
-    expenseLines: [...fixedOutLines.filter((l) => l.kind !== 'credit'), ...extraOutLines],
+    expenseLines: [...fixedOutLines.filter((l) => l.kind !== 'credit'), ...loanLines, ...extraOutLines],
     creditLine,
     onCardLines,
     instalmentLines: instLines,

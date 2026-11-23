@@ -73,7 +73,7 @@ async function extract(batch: Email[]) {
 export function currentCreditStatus() {
   const st = useStore.getState();
   const cycle = creditCycle(cycleMonthOf(dateKey(), st.settings.statementDay), st.settings.statementDay);
-  const flow = monthFlow({ fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments }, cycle.month, { txs: st.txs, statementDay: st.settings.statementDay });
+  const flow = monthFlow({ fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans }, cycle.month, { txs: st.txs, statementDay: st.settings.statementDay });
   return { cycle, spent: flow.creditSpent, planned: flow.creditPlanned, over: flow.creditOver, hasPlan: flow.creditLine !== null };
 }
 
