@@ -38,21 +38,26 @@ function DebtSheet({ debt, onClose, onSave, onDelete }: { debt: PlanDebt | null 
   }, [debt]);
   const ratePct = parseFloat(rate.replace(',', '.'));
   return (
-    <Sheet visible={debt !== undefined} onClose={onClose} title={debt ? 'Sửa khoản vay' : 'Thêm khoản vay'}>
+    <Sheet
+      visible={debt !== undefined}
+      onClose={onClose}
+      title={debt ? 'Sửa khoản vay' : 'Thêm khoản vay'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!name.trim() || !Number.isFinite(ratePct)}
+          onPress={() => {
+            onSave({ id: debt?.id ?? uid(), name: name.trim(), balance: balance > 0 ? balance : null, monthlyPayment: payment, ratePct });
+            onClose();
+          }}
+        />
+      }>
       <Field label="Tên khoản vay" value={name} onChangeText={setName} placeholder="Vay mua nhà…" />
       <AmountField key={`b${key}`} label="Dư nợ còn lại" value={balance} onChange={setBalance} />
       <Txt v="small">Để 0 nếu chưa rõ dư nợ: Finy sẽ coi đây là khoản trả kéo dài suốt kế hoạch.</Txt>
       <AmountField key={`p${key}`} label="Trả mỗi tháng" value={payment} onChange={setPayment} />
       <Field label="Lãi suất (%/năm)" value={rate} onChangeText={setRate} />
-      <Btn
-        label="Lưu"
-        icon="checkmark"
-        disabled={!name.trim() || !Number.isFinite(ratePct)}
-        onPress={() => {
-          onSave({ id: debt?.id ?? uid(), name: name.trim(), balance: balance > 0 ? balance : null, monthlyPayment: payment, ratePct });
-          onClose();
-        }}
-      />
       {debt ? <Btn label="Xoá khoản vay" kind="danger" icon="trash-outline" onPress={() => { onDelete(debt.id); onClose(); }} /> : null}
     </Sheet>
   );
@@ -72,7 +77,21 @@ function GoalSheet({ goal, maxYear, onClose, onSave, onDelete }: { goal: PlanGoa
   }, [goal, maxYear]);
   const thisYear = new Date().getFullYear();
   return (
-    <Sheet visible={goal !== undefined} onClose={onClose} title={goal ? 'Sửa khoản chi lớn' : 'Thêm khoản chi lớn'}>
+    <Sheet
+      visible={goal !== undefined}
+      onClose={onClose}
+      title={goal ? 'Sửa khoản chi lớn' : 'Thêm khoản chi lớn'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!name.trim() || !(amount > 0)}
+          onPress={() => {
+            onSave({ id: goal?.id ?? uid(), name: name.trim(), amount, year });
+            onClose();
+          }}
+        />
+      }>
       <Field label="Tên" value={name} onChangeText={setName} placeholder="Mua xe, sửa nhà, du học…" />
       <AmountField key={key} label="Số tiền" value={amount} onChange={setAmount} />
       <Txt v="label">Vào năm</Txt>
@@ -81,15 +100,6 @@ function GoalSheet({ goal, maxYear, onClose, onSave, onDelete }: { goal: PlanGoa
           <Chip key={y} label={String(thisYear + y)} active={year === y} onPress={() => setYear(y)} />
         ))}
       </View>
-      <Btn
-        label="Lưu"
-        icon="checkmark"
-        disabled={!name.trim() || !(amount > 0)}
-        onPress={() => {
-          onSave({ id: goal?.id ?? uid(), name: name.trim(), amount, year });
-          onClose();
-        }}
-      />
       {goal ? <Btn label="Xoá" kind="danger" icon="trash-outline" onPress={() => { onDelete(goal.id); onClose(); }} /> : null}
     </Sheet>
   );

@@ -303,7 +303,7 @@ export function AmountField({
           }}
           placeholder="0"
           placeholderTextColor={alpha(c.muted, 0.6)}
-          keyboardType="numbers-and-punctuation"
+          keyboardType="number-pad"
           autoFocus={autoFocus}
           style={{ flex: 1, color: c.text, fontSize: fs(22), fontWeight: '700', paddingVertical: 12, minHeight: 56 }}
         />
@@ -334,11 +334,14 @@ export function Sheet({
   title,
   onClose,
   children,
+  footer,
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** Primary action, pinned below the scrolling form so the keyboard never hides it. */
+  footer?: React.ReactNode;
 }) {
   const { c, r, pad } = useUi();
   const insets = useSafeAreaInsets();
@@ -363,9 +366,10 @@ export function Sheet({
             <Txt v="heading">{title}</Txt>
             <IconBtn name="close" onPress={onClose} label="Đóng" />
           </Row>
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingBottom: 4 }}>
+          <ScrollView style={{ flexGrow: 0 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingBottom: 4 }}>
             {children}
           </ScrollView>
+          {footer ? <View style={{ paddingTop: 12 }}>{footer}</View> : null}
         </View>
       </KeyboardAvoidingView>
     </Modal>

@@ -1,9 +1,9 @@
 import Constants from 'expo-constants';
-import { Stack } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as ScreenCapture from 'expo-screen-capture';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { AppState, Modal, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LockScreen } from '../components/LockScreen';
@@ -12,7 +12,16 @@ import { useStore } from '../lib/store';
 
 export default function RootLayout() {
   const phase = useStore((s) => s.phase);
-  const bg = useStore((s) => s.ui.colors.bg);
+  const colors = useStore((s) => s.ui.colors);
+  const bg = colors.bg;
+  // Navigation chrome (tab bar insets, screen transitions) follows the app theme too.
+  const navTheme = useMemo(
+    () => ({
+      ...DarkTheme,
+      colors: { ...DarkTheme.colors, background: colors.bg, card: colors.card, text: colors.text, border: colors.border, primary: colors.accent },
+    }),
+    [colors],
+  );
 
   useEffect(() => {
     useStore.getState().boot();
@@ -45,7 +54,9 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style="light" />
       <View style={{ flex: 1, backgroundColor: bg }}>
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: bg }, animation: 'slide_from_right' }} />
+        <ThemeProvider value={navTheme}>
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: bg }, animation: 'slide_from_right' }} />
+        </ThemeProvider>
       </View>
       {/* A Modal so the lock also covers any sheet that was open when the app was left. */}
       <Modal visible={phase !== 'ready'} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={() => {}}>

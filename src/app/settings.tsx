@@ -218,12 +218,15 @@ export default function Settings() {
         <Btn label="Xoá toàn bộ dữ liệu" kind="danger" icon="trash-outline" onPress={wipe} />
       </Card>
 
-      <Sheet visible={pinOpen} onClose={() => setPinOpen(false)} title="Đổi mã PIN">
+      <Sheet
+        visible={pinOpen}
+        onClose={() => setPinOpen(false)}
+        title="Đổi mã PIN"
+        footer={<Btn label="Đổi mã PIN" icon="checkmark" onPress={changePin} disabled={oldPin.length !== PIN_LENGTH} />}>
         <PinInput label="Mã PIN hiện tại" value={oldPin} onChange={setOldPin} />
         <PinInput label="Mã PIN mới" value={newPin} onChange={setNewPin} />
         <PinInput label="Nhập lại mã PIN mới" value={newPin2} onChange={setNewPin2} />
         {pinMsg ? <Txt v="small" color={c.negative}>{pinMsg}</Txt> : null}
-        <Btn label="Đổi mã PIN" icon="checkmark" onPress={changePin} disabled={oldPin.length !== PIN_LENGTH} />
       </Sheet>
     </Screen>
   );

@@ -71,7 +71,11 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
   };
 
   return (
-    <Sheet visible={visible} onClose={onClose} title={tx ? 'Sửa giao dịch' : 'Nhập chi tiêu'}>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={tx ? 'Sửa giao dịch' : 'Nhập chi tiêu'}
+      footer={<Btn label="Lưu" icon="checkmark" onPress={save} disabled={!(amount > 0)} />}>
       <Segmented value={direction} onChange={setDirection} options={[{ value: 'out', label: 'Chi' }, { value: 'in', label: 'Thu' }]} />
       <AmountField key={key} label="Số tiền" value={amount} onChange={setAmount} autoFocus={!tx} />
       <Field label="Ghi chú" value={note} onChangeText={setNote} placeholder="Ăn trưa, xăng xe…" />
@@ -83,7 +87,6 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
       {direction === 'out' ? (
         <Toggle label="Tính vào chi tiêu hằng ngày" hint="Tắt với khoản trả nợ, chuyển tiền để dành…" value={counts} onChange={setCounts} />
       ) : null}
-      <Btn label="Lưu" icon="checkmark" onPress={save} disabled={!(amount > 0)} />
       {tx ? (
         <Btn
           label="Xoá giao dịch"
@@ -126,22 +129,27 @@ export function ItemSheet({ visible, onClose, month, item }: { visible: boolean;
   }, [visible, item]);
 
   return (
-    <Sheet visible={visible} onClose={onClose} title={item ? 'Sửa mục' : 'Thêm mục'}>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={item ? 'Sửa mục' : 'Thêm mục'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!name.trim()}
+          onPress={() => {
+            upsertItem(month, { id: item?.id, name, amount, kind, daily: kind === 'expense' && daily });
+            onClose();
+          }}
+        />
+      }>
       <Field label="Tên mục" value={name} onChangeText={setName} placeholder="Điện nước, học phí…" autoFocus={!item} />
       <AmountField key={key} label="Số tiền mỗi tháng" value={amount} onChange={setAmount} />
       <Segmented value={kind} onChange={setKind} options={KIND_OPTIONS} />
       {kind === 'expense' ? (
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
       ) : null}
-      <Btn
-        label="Lưu"
-        icon="checkmark"
-        disabled={!name.trim()}
-        onPress={() => {
-          upsertItem(month, { id: item?.id, name, amount, kind, daily: kind === 'expense' && daily });
-          onClose();
-        }}
-      />
       {item ? (
         <Btn
           label="Xoá mục"
@@ -184,7 +192,21 @@ export function AccountSheet({ visible, onClose, account }: { visible: boolean; 
   }, [visible, account]);
 
   return (
-    <Sheet visible={visible} onClose={onClose} title={account ? 'Sửa tài khoản' : 'Thêm tài khoản'}>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={account ? 'Sửa tài khoản' : 'Thêm tài khoản'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!name.trim()}
+          onPress={() => {
+            upsertAccount({ id: account?.id, name, kind, balance });
+            onClose();
+          }}
+        />
+      }>
       <Field label="Tên" value={name} onChangeText={setName} placeholder="HSBC, sổ tiết kiệm, tiền mặt…" autoFocus={!account} />
       <AmountField key={key} label={kind === 'debt' ? 'Dư nợ hiện tại' : 'Số dư hiện tại'} value={balance} onChange={setBalance} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -192,15 +214,6 @@ export function AccountSheet({ visible, onClose, account }: { visible: boolean; 
           <Btn key={k.value} label={k.label} icon={k.icon} kind={kind === k.value ? 'primary' : 'ghost'} onPress={() => setKind(k.value)} style={{ minHeight: 42, paddingHorizontal: 12 }} />
         ))}
       </View>
-      <Btn
-        label="Lưu"
-        icon="checkmark"
-        disabled={!name.trim()}
-        onPress={() => {
-          upsertAccount({ id: account?.id, name, kind, balance });
-          onClose();
-        }}
-      />
       {account ? (
         <Btn
           label="Xoá tài khoản"
@@ -253,18 +266,23 @@ export function NumberSheet({
 
   const parsed = money ? n : parseFloat(text.replace(',', '.'));
   return (
-    <Sheet visible={visible} onClose={onClose} title={title}>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!Number.isFinite(parsed)}
+          onPress={() => {
+            onSave(parsed);
+            onClose();
+          }}
+        />
+      }>
       {money ? <AmountField key={key} label={label} value={value} onChange={setN} autoFocus /> : <Field label={label} value={text} onChangeText={setText} autoFocus />}
       {hint ? <Txt v="small">{hint}</Txt> : null}
-      <Btn
-        label="Lưu"
-        icon="checkmark"
-        disabled={!Number.isFinite(parsed)}
-        onPress={() => {
-          onSave(parsed);
-          onClose();
-        }}
-      />
       {allowAuto ? (
         <Btn
           label="Tự lấy theo ngân sách"
