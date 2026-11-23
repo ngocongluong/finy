@@ -39,6 +39,7 @@ const config: ExpoConfig = {
     adaptiveIcon: {
       backgroundColor: '#0B0D12',
       foregroundImage: './assets/android-icon-foreground.png',
+      backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     permissions: ['USE_BIOMETRIC', 'USE_FINGERPRINT'],
