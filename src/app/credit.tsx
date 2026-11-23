@@ -4,13 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { TxSheet } from '../components/sheets';
-import { Amount, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../components/ui';
-import { creditCycle, cycleMonthOf, monthFlow } from '../lib/finance';
+import { InstalmentSheet, TxSheet } from '../components/sheets';
+import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../components/ui';
+import { creditCycle, cycleMonthOf, instalmentAmount, instalmentPart, monthFlow } from '../lib/finance';
 import { dateKey, fmtTime, monthLabel, shiftMonth } from '../lib/format';
 import { useBudget } from '../lib/hooks';
 import { useStore } from '../lib/store';
-import type { Tx } from '../lib/types';
+import type { Instalment, Tx } from '../lib/types';
 
 const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
 const WEEKDAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -26,6 +26,9 @@ export default function CreditCycleScreen() {
   const initial = typeof params.month === 'string' && /^\d{4}-\d{2}$/.test(params.month) ? params.month : cycleMonthOf(today, statementDay);
   const [month, setMonth] = useState(initial);
   const [tx, setTx] = useState<Tx | undefined>(undefined);
+  const instalments = useStore((s) => s.instalments);
+  // `open` separate from the payload so the sheet keeps its content while closing.
+  const [inst, setInst] = useState<{ open: boolean; item: Instalment | null }>({ open: false, item: null });
 
   const cycle = useMemo(() => creditCycle(month, statementDay), [month, statementDay]);
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
@@ -84,6 +87,38 @@ export default function CreditCycleScreen() {
         </Pressable>
       </Card>
 
+      <Card style={{ gap: 2 }}>
+        <Row style={{ marginBottom: 4 }}>
+          <Txt v="heading">Trả góp qua thẻ</Txt>
+          <Amount value={flow.instalmentLines.reduce((s, l) => s + l.amount, 0)} color={c.muted} />
+        </Row>
+        {instalments.length === 0 ? <Txt v="label">Chưa có khoản trả góp nào.</Txt> : null}
+        {[...instalments]
+          .sort((a, b) => (instalmentPart(b, month) ? 1 : 0) - (instalmentPart(a, month) ? 1 : 0) || a.startMonth.localeCompare(b.startMonth))
+          .map((p) => {
+            const part = instalmentPart(p, month);
+            const end = shiftMonth(p.startMonth, p.months - 1);
+            const status = part
+              ? `Kỳ ${part}/${p.months} · tổng ${money(p.total)}`
+              : month < p.startMonth
+                ? `Bắt đầu ${monthLabel(p.startMonth).toLowerCase()}`
+                : `Đã trả xong (${monthLabel(end).toLowerCase()})`;
+            return (
+              <Pressable key={p.id} onPress={() => setInst({ open: true, item: p })} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 52, justifyContent: 'center' })}>
+                <Row>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Txt numberOfLines={1} color={part ? c.text : c.muted}>{p.name}</Txt>
+                    <Txt v="small">{status}</Txt>
+                  </View>
+                  <Amount value={part ? instalmentAmount(p, part) : 0} color={part ? c.text : c.muted} />
+                  <Ionicons name="chevron-forward" size={16} color={c.muted} style={{ marginLeft: 6 }} />
+                </Row>
+              </Pressable>
+            );
+          })}
+        <Btn label="Thêm khoản trả góp" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setInst({ open: true, item: null })} />
+      </Card>
+
       {flow.onCardLines.length ? (
         <Card style={{ gap: 2 }}>
           <Txt v="heading" style={{ marginBottom: 4 }}>Trả qua thẻ mỗi kỳ</Txt>
@@ -134,6 +169,7 @@ export default function CreditCycleScreen() {
       })}
       <Txt v="small">Giờ giao dịch là lúc HSBC gửi email thông báo (thường vài giây sau khi quẹt thẻ); email chỉ ghi ngày.</Txt>
       <TxSheet visible={tx !== undefined} onClose={() => setTx(undefined)} tx={tx} />
+      <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={month} />
     </Screen>
   );
 }

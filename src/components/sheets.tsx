@@ -1,9 +1,10 @@
 // Add / edit forms, shared by several screens.
 import React, { useEffect, useState } from 'react';
 import { Alert, Switch, View } from 'react-native';
-import { dateKey, dayLabel, fmtVND, monthKey, monthShort, shiftMonth } from '../lib/format';
+import { instalmentAmount } from '../lib/finance';
+import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, FixedItem, OneOff, Tx } from '../lib/types';
+import type { Account, AccountKind, FixedItem, Instalment, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -509,6 +510,136 @@ export function NumberSheet({
             onSave(null);
             onClose();
           }}
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
+const MONTH_CHOICES = [3, 6, 9, 12, 18, 24, 36];
+
+/**
+ * Add or edit a purchase paid off on the credit card in equal monthly parts.
+ * The first part can be in an earlier statement for a plan already under way.
+ */
+export function InstalmentSheet({
+  visible,
+  onClose,
+  item,
+  defaultStart,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  item?: Instalment | null;
+  /** Statement month preselected for a new plan. */
+  defaultStart: string;
+}) {
+  const { c } = useUi();
+  const money = useMoney();
+  const upsert = useStore((s) => s.upsertInstalment);
+  const remove = useStore((s) => s.deleteInstalment);
+  const [name, setName] = useState('');
+  const [total, setTotal] = useState(0);
+  const [months, setMonths] = useState(12);
+  const [monthsText, setMonthsText] = useState('12');
+  const [start, setStart] = useState(defaultStart);
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    setName(item?.name ?? '');
+    setTotal(item?.total ?? 0);
+    setMonths(item?.months ?? 12);
+    setMonthsText(String(item?.months ?? 12));
+    setStart(item?.startMonth ?? defaultStart);
+    setKey((k) => k + 1);
+  }, [visible, item, defaultStart]);
+
+  // First part: from a year back (plans already running) to two years ahead.
+  const now = monthKey();
+  const starts = Array.from({ length: 37 }, (_, i) => shiftMonth(now, i - 12));
+  if (!starts.includes(start)) starts.unshift(start);
+
+  const plan: Instalment = { id: item?.id ?? '', name, total, months, startMonth: start };
+  const valid = name.trim() && total > 0 && months >= 1;
+  const first = valid ? instalmentAmount(plan, 1) : 0;
+  const last = valid ? instalmentAmount(plan, months) : 0;
+  const end = shiftMonth(start, months - 1);
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={item ? 'Sửa khoản trả góp' : 'Thêm khoản trả góp'}
+      footer={
+        <Btn
+          label="Lưu"
+          icon="checkmark"
+          disabled={!valid}
+          onPress={() => {
+            upsert({ id: item?.id, name, total, months, startMonth: start });
+            onClose();
+          }}
+        />
+      }>
+      <Field label="Tên" value={name} onChangeText={setName} placeholder="Điện thoại, laptop, máy lạnh…" autoFocus={!item} />
+      <AmountField key={key} label="Tổng số tiền trả góp" value={total} onChange={setTotal} />
+      <View style={{ gap: 8 }}>
+        <Txt v="label">Số tháng</Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {MONTH_CHOICES.map((n) => (
+            <Chip
+              key={n}
+              label={`${n} tháng`}
+              active={months === n}
+              onPress={() => {
+                setMonths(n);
+                setMonthsText(String(n));
+              }}
+            />
+          ))}
+        </View>
+        <Field
+          label="Hoặc nhập số tháng"
+          value={monthsText}
+          onChangeText={(t) => {
+            const digits = t.replace(/\D/g, '').slice(0, 3);
+            setMonthsText(digits);
+            const n = parseInt(digits, 10);
+            if (n >= 1 && n <= 120) setMonths(n);
+          }}
+        />
+      </View>
+      <View style={{ gap: 8 }}>
+        <Txt v="label">Kỳ sao kê trả phần đầu tiên</Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {starts.map((m) => (
+            <Chip key={m} label={monthShort(m)} active={start === m} onPress={() => setStart(m)} />
+          ))}
+        </View>
+      </View>
+      {valid ? (
+        <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 4 }}>
+          <Txt>
+            Mỗi tháng {money(first)}
+            {last !== first ? ` (kỳ cuối ${money(last)})` : ''}
+          </Txt>
+          <Txt v="small">
+            {months} kỳ, từ {monthLabel(start).toLowerCase()} đến {monthLabel(end).toLowerCase()}. Được cộng vào chi tín dụng của từng kỳ.
+          </Txt>
+        </View>
+      ) : null}
+      {item ? (
+        <Btn
+          label="Xoá khoản trả góp"
+          kind="danger"
+          icon="trash-outline"
+          onPress={() =>
+            confirmDelete(`khoản trả góp "${item.name}"`, () => {
+              remove(item.id);
+              onClose();
+            })
+          }
         />
       ) : null}
     </Sheet>

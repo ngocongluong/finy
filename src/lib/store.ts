@@ -8,7 +8,7 @@ import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, ChatMsg, CreditCardInfo, FixedItem, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, ChatMsg, CreditCardInfo, FixedItem, Instalment, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
 
 /**
  * The address HSBC Vietnam sends card-transaction alerts from. Which senders
@@ -44,6 +44,8 @@ interface State {
   overrides: Overrides;
   /** Latest balance the bank reported for the credit card. */
   creditCard: CreditCardInfo | null;
+  /** Purchases paid off on the card in monthly parts. */
+  instalments: Instalment[];
   accounts: Account[];
   txs: Tx[];
   plan: PlanParams;
@@ -64,6 +66,8 @@ interface State {
   /** Sets a fixed item's amount for one month only; null removes the adjustment. */
   setOverride: (month: string, fixedId: string, amount: number | null) => void;
   setCreditCard: (info: CreditCardInfo) => void;
+  upsertInstalment: (p: Omit<Instalment, 'id'> & { id?: string }) => Instalment;
+  deleteInstalment: (id: string) => void;
   /** Adds the same one-off to each of the given months. */
   addOneOffs: (months: string[], item: Omit<OneOff, 'id' | 'month'>) => OneOff[];
   updateOneOff: (item: OneOff) => void;
@@ -120,6 +124,7 @@ export const useStore = create<State>((set, get) => ({
   oneOffs: [],
   overrides: {},
   creditCard: null,
+  instalments: [],
   accounts: [],
   txs: [],
   plan: DEFAULT_PLAN,
@@ -145,12 +150,13 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, creditCard, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, creditCard, instalments, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
         db.kvGet<Overrides>('overrides'),
         db.kvGet<CreditCardInfo>('creditCard'),
+        db.kvGet<Instalment[]>('instalments'),
         db.kvGet<boolean>('creditMarked'),
         db.kvGet<Record<string, MonthBudget>>('budgets'),
         db.kvGet<Account[]>('accounts'),
@@ -178,6 +184,7 @@ export const useStore = create<State>((set, get) => ({
         oneOffs: oneOffs ?? seeded?.oneOffs ?? [],
         overrides: overrides ?? {},
         creditCard: creditCard ?? null,
+        instalments: instalments ?? [],
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
         settings: mergedSettings,
@@ -257,6 +264,27 @@ export const useStore = create<State>((set, get) => ({
   setCreditCard: (info) => {
     set({ creditCard: info });
     persist('creditCard', info);
+  },
+
+  upsertInstalment: (p) => {
+    const full: Instalment = {
+      id: p.id ?? uid(),
+      name: p.name.trim(),
+      total: Math.max(0, Math.round(p.total)),
+      months: Math.min(120, Math.max(1, Math.round(p.months))),
+      startMonth: p.startMonth,
+    };
+    const cur = get().instalments;
+    const instalments = cur.some((x) => x.id === full.id) ? cur.map((x) => (x.id === full.id ? full : x)) : [...cur, full];
+    set({ instalments });
+    persist('instalments', instalments);
+    return full;
+  },
+
+  deleteInstalment: (id) => {
+    const instalments = get().instalments.filter((x) => x.id !== id);
+    set({ instalments });
+    persist('instalments', instalments);
   },
 
   addOneOffs: (months, item) => {
@@ -391,6 +419,7 @@ export const useStore = create<State>((set, get) => ({
       oneOffs: [],
       overrides: {},
       creditCard: null,
+      instalments: [],
       accounts: [],
       txs: [],
       plan: DEFAULT_PLAN,
@@ -401,6 +430,7 @@ export const useStore = create<State>((set, get) => ({
     // Written explicitly so the next launch does not treat this as a first run and re-seed.
     persist('fixed', []);
     persist('oneOffs', []);
+    persist('instalments', []);
     persist('creditMarked', true);
     persist('accounts', []);
   },

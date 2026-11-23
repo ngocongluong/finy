@@ -1,13 +1,54 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FixedItem, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, FixedItem, Instalment, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
   fixed: FixedItem[];
   oneOffs: OneOff[];
   overrides: Overrides;
+  /** Card instalment plans; optional so older callers and tests stay valid. */
+  instalments?: Instalment[];
+}
+
+const monthsBetween = (from: string, to: string) => {
+  const [y1, m1] = from.split('-').map(Number);
+  const [y2, m2] = to.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+};
+
+/** Which part of the plan falls in a statement month (1-based), or null when none does. */
+export function instalmentPart(p: Instalment, month: string): number | null {
+  const i = monthsBetween(p.startMonth, month);
+  return i >= 0 && i < p.months ? i + 1 : null;
+}
+
+/**
+ * The amount of part `n`: the total split evenly in whole đồng, the rounding
+ * remainder paid with the last part, so the parts add up to the total exactly.
+ */
+export function instalmentAmount(p: Instalment, n: number): number {
+  const months = Math.max(1, Math.round(p.months));
+  const base = Math.floor(p.total / months);
+  return n === months ? p.total - base * (months - 1) : base;
+}
+
+export interface InstalmentLine {
+  id: string;
+  name: string;
+  amount: number;
+  part: number;
+  months: number;
+}
+
+export function instalmentLines(plans: Instalment[] | undefined, month: string): InstalmentLine[] {
+  const out: InstalmentLine[] = [];
+  for (const p of plans ?? []) {
+    const part = instalmentPart(p, month);
+    if (part !== null) out.push({ id: p.id, name: p.name, amount: instalmentAmount(p, part), part, months: p.months });
+  }
+  return out;
 }
 
 /** A fixed item's amount in a given month: the month's own adjustment if there is one. */
@@ -127,6 +168,8 @@ export interface MonthFlow {
   creditLine: Line | null;
   /** Fixed items charged to the card each cycle; included in creditSpent. */
   onCardLines: Line[];
+  /** Instalment parts due in this statement month; included in creditSpent. */
+  instalmentLines: InstalmentLine[];
 }
 
 const total = (list: { amount: number }[]) => list.reduce((s, i) => s + i.amount, 0);
@@ -150,7 +193,8 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   const creditLine = fixedOutLines.find((l) => l.kind === 'credit') ?? null;
   const creditPlanned = creditLine?.amount ?? 0;
   const cycle = credit ? creditCycle(month, credit.statementDay) : null;
-  const spent = (credit && cycle ? creditSpent(credit.txs, cycle) : 0) + total(onCardLines);
+  const instLines = instalmentLines(b.instalments, month);
+  const spent = (credit && cycle ? creditSpent(credit.txs, cycle) : 0) + total(onCardLines) + total(instLines);
   const creditClosed = !!cycle && (credit?.today ?? dateKey()) > cycle.end;
   const creditOver = creditLine ? Math.max(0, spent - creditPlanned) : 0;
   const creditCounted = creditClosed || !creditLine ? spent : Math.max(creditPlanned, spent);
@@ -184,6 +228,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     expenseLines: [...fixedOutLines.filter((l) => l.kind !== 'credit'), ...extraOutLines],
     creditLine,
     onCardLines,
+    instalmentLines: instLines,
   };
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
@@ -421,6 +421,33 @@ test('a fixed expense charged to the card is part of every cycle, not a separate
   assert.equal(closed.expense, 30_000_000 + 33_000_000); // not counted a second time
   assert.ok(!closed.expenseLines.some((l) => l.id === 'inst'));
   assert.deepEqual(closed.onCardLines.map((l) => l.id), ['inst']);
+});
+
+test('an instalment is split evenly, the remainder on the last part, and adds up exactly', () => {
+  const p = { id: 'p', name: 'Laptop', total: 10_000_000, months: 3, startMonth: '2026-11' };
+  assert.deepEqual([1, 2, 3].map((n) => instalmentAmount(p, n)), [3_333_333, 3_333_333, 3_333_334]);
+  assert.equal([1, 2, 3].reduce((s, n) => s + instalmentAmount(p, n), 0), 10_000_000);
+  assert.deepEqual(['2026-10', '2026-11', '2027-01', '2027-02'].map((m) => instalmentPart(p, m)), [null, 1, 3, null]);
+  assert.deepEqual(instalmentLines([p], '2026-12'), [{ id: 'p', name: 'Laptop', amount: 3_333_333, part: 2, months: 3 }]);
+});
+
+test('instalment parts are added to the card spending of their statement cycle', () => {
+  const b: Budget = {
+    fixed: [...fixed, { id: 'cc', name: 'Thẻ tín dụng', amount: 20_000_000, direction: 'out', kind: 'credit' }],
+    oneOffs: [],
+    overrides: {},
+    instalments: [
+      { id: 'a', name: 'Điện thoại', total: 12_000_000, months: 12, startMonth: '2026-06' }, // part 7 in December
+      { id: 'b', name: 'Đã xong', total: 3_000_000, months: 3, startMonth: '2026-01' },
+    ],
+  };
+  const tx: Tx = { id: 't', ts: 0, date: '2026-11-20', amount: 15_000_000, direction: 'out', note: '', source: 'hsbc', countsDaily: false, credit: true };
+  const closed = monthFlow(b, '2026-12', { txs: [tx], statementDay: 14, today: '2026-12-20' });
+  assert.equal(closed.creditSpent, 16_000_000);
+  assert.deepEqual(closed.instalmentLines.map((l) => [l.name, l.part, l.amount]), [['Điện thoại', 7, 1_000_000]]);
+  assert.equal(closed.expense, 30_000_000 + 16_000_000);
+  // After the last part the plan stops adding anything.
+  assert.equal(monthFlow(b, '2027-06', { txs: [], statementDay: 14, today: '2027-07-01' }).creditSpent, 0);
 });
 
 test('only bank mail that reads like a transaction is sent on to Claude', () => {

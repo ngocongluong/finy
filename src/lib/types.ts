@@ -32,6 +32,18 @@ export interface OneOff {
   direction: 'in' | 'out';
 }
 
+/** A purchase paid off on the credit card in equal monthly parts. */
+export interface Instalment {
+  id: string;
+  name: string;
+  /** Total to pay back, VND. */
+  total: number;
+  /** Number of monthly parts. */
+  months: number;
+  /** Statement month (YYYY-MM) of the first part. */
+  startMonth: string;
+}
+
 /**
  * Per-month adjustments of fixed items: overrides[month][fixedItemId] is the
  * amount to use in that month instead of the item's usual amount (0 = skipped).
