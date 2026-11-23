@@ -102,27 +102,27 @@ export default function Budget() {
 
           <Card eye={'budget.summary'} style={{ gap: 10 }}>
             <Pressable onPress={() => setCashOpen(true)} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-              <Row>
-                <View>
+              <Row style={{ gap: 12 }}>
+                <View style={{ flex: 1 }}>
                   <Txt v="label">Tiền đang có</Txt>
                   <Txt v="small">{cash ? `nhập ${monthLabel(cash.month).toLowerCase()} · chạm để sửa` : 'Chạm để nhập'}</Txt>
                 </View>
-                <Amount v="title" value={cash?.amount ?? 0} />
+                <Amount v="heading" value={cash?.amount ?? 0} color={c.positive} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
               </Row>
             </Pressable>
             <Pressable onPress={() => setView('fixed')} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-              <Row>
-                <View>
+              <Row style={{ gap: 12 }}>
+                <View style={{ flex: 1 }}>
                   <Txt v="label">Tiền đang nợ</Txt>
                   <Txt v="small">{budget.loans?.length ? 'dư nợ vay ngân hàng hiện tại' : 'Chưa có khoản vay — nhập ở Cố định'}</Txt>
                 </View>
-                <Amount v="title" value={debt} color={debt > 0 ? c.negative : c.text} />
+                <Amount v="heading" value={debt} color={debt > 0 ? c.negative : c.text} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
               </Row>
             </Pressable>
             <View style={{ height: 1, backgroundColor: c.border }} />
-            <Row>
-              <Txt v="label">Còn lại sau nợ</Txt>
-              <Amount value={(cash?.amount ?? 0) - debt} color={(cash?.amount ?? 0) - debt < 0 ? c.negative : c.positive} />
+            <Row style={{ gap: 12 }}>
+              <Txt v="label" style={{ flex: 1 }}>Còn lại sau nợ</Txt>
+              <Amount value={(cash?.amount ?? 0) - debt} color={(cash?.amount ?? 0) - debt < 0 ? c.negative : c.positive} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
             </Row>
           </Card>
 
