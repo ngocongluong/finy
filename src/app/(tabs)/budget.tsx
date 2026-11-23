@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
-import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
+import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
 import { cycleMonthOf, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
@@ -135,7 +135,13 @@ export default function Budget() {
             ))}
           </ScrollView>
 
-          <Card eye={'budget.table'} style={{ gap: 2 }}>
+          <Card style={{ gap: 2 }}>
+            <HideScope id="budget.table">
+            {/* The eye sits in its own title row, so the columns get the card's full width. */}
+            <Row style={{ marginTop: -6, marginBottom: 2 }}>
+              <Txt v="heading">Bảng thu chi</Txt>
+              <EyeToggle id="budget.table" />
+            </Row>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="small" style={{ width: 54 }}>Tháng</Txt>
               <Txt v="small" style={cell}>Thu</Txt>
@@ -160,10 +166,15 @@ export default function Budget() {
                     backgroundColor: pressed ? c.cardAlt : 'transparent',
                   })}>
                   <Row>
-                    <View style={{ width: 54, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                      <Txt v="label" color={r.month === now ? c.text : c.muted}>{monthShort(r.month)}</Txt>
-                      {special ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.accent }} /> : null}
-                      {r.creditOver > 0 ? <Ionicons name="warning" size={13} color={c.negative} accessibilityLabel="Vượt dự chi tín dụng" /> : null}
+                    <View style={{ width: 54 }}>
+                      <Txt v="label" numberOfLines={1} color={r.month === now ? c.text : c.muted}>{monthShort(r.month)}</Txt>
+                      {/* Markers go under the month so they never run into the first amount column. */}
+                      {special || r.creditOver > 0 ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                          {special ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.accent }} /> : null}
+                          {r.creditOver > 0 ? <Ionicons name="warning" size={11} color={c.negative} accessibilityLabel="Vượt dự chi tín dụng" /> : null}
+                        </View>
+                      ) : null}
                     </View>
                     <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{money(r.income, true)}</Txt>
                     <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{money(r.expense, true)}</Txt>
@@ -186,6 +197,7 @@ export default function Budget() {
             <Txt v="small" style={{ marginTop: 8 }}>
               Dự kiến = tiền đang có + để dành cộng dồn đến cuối tháng đó (tính từ tháng nhập tiền đang có). Chạm một tháng để xem và sửa chi tiết thu, chi của tháng đó. Chấm tròn = tháng có khoản phát sinh hoặc số tiền chỉnh riêng.
             </Txt>
+          </HideScope>
           </Card>
         </>
       ) : null}
