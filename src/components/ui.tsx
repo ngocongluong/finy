@@ -1,7 +1,7 @@
 // Themed building blocks. Every colour, radius and size comes from the
 // UiConfig in the store, so a change made by Finy restyles the whole app.
 import { Ionicons } from '@expo/vector-icons';
-import React, { createContext, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
@@ -358,14 +358,25 @@ export function AmountField({
   value,
   onChange,
   autoFocus,
+  sync,
 }: {
   label: string;
   value: number;
   onChange: (n: number) => void;
   autoFocus?: boolean;
+  /**
+   * Follow `value` when it is changed from outside (e.g. filled in by a
+   * button). Otherwise `value` is only the starting amount.
+   */
+  sync?: boolean;
 }) {
   const { c, r, fs } = useUi();
   const [text, setText] = useState(value ? fmtInput(String(value)) : '');
+  useEffect(() => {
+    if (!sync) return;
+    // What was typed stays as typed ("20tr") as long as it means the same amount.
+    setText((t) => (parseAmount(t) === value ? t : value ? fmtInput(String(value)) : ''));
+  }, [sync, value]);
   const hasUnit = /[a-zA-Zỷỉệ]/.test(text);
   return (
     <View style={{ gap: 6 }}>

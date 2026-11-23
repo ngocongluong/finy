@@ -2,10 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Pressable, Switch, Text, View } from 'react-native';
-import { creditCycle, instalmentAmount, loanBalance, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
+import { creditCycle, fixedBase, fixedPeriodAt, fixedPeriodsAmountAt, instalmentAmount, loanBalance, loanFinalMonth, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, FixedItem, Instalment, Loan, OneOff, Tx } from '../lib/types';
+import type { Account, AccountKind, FixedItem, FixedPeriod, Instalment, Loan, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -112,7 +112,26 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
   );
 }
 
-/** Add or edit an income or expense that repeats every month. */
+/** A period of a fixed item in words: "T11/2026 – T3/2027", "từ T4/2027", "đến T3/2027". */
+export function periodLabel(p: Pick<FixedPeriod, 'from' | 'to'>): string {
+  if (p.from && p.to) return p.from === p.to ? monthYear(p.from) : `${monthYear(p.from)} – ${monthYear(p.to)}`;
+  if (p.from) return `từ ${monthYear(p.from)}`;
+  if (p.to) return `đến ${monthYear(p.to)}`;
+  return 'mọi tháng';
+}
+
+interface DraftRange {
+  key: number;
+  from: string | null;
+  to: string | null;
+  amount: number;
+}
+
+/**
+ * Add or edit an income or expense that repeats every month: one amount for
+ * all the time, or periods (from month to month) each with its own amount;
+ * the cash-flow table then uses each month's period amount.
+ */
 export function FixedSheet({
   visible,
   onClose,
@@ -127,6 +146,7 @@ export function FixedSheet({
   /** Kind preselected when adding a new expense. */
   initialKind?: 'expense' | 'debt' | 'credit';
 }) {
+  const { c } = useUi();
   const upsertFixed = useStore((s) => s.upsertFixed);
   const deleteFixed = useStore((s) => s.deleteFixed);
   const [name, setName] = useState('');
@@ -134,7 +154,10 @@ export function FixedSheet({
   const [kind, setKind] = useState<'expense' | 'debt' | 'credit'>('expense');
   const [daily, setDaily] = useState(false);
   const [onCard, setOnCard] = useState(false);
+  const [mode, setMode] = useState<'all' | 'periods'>('all');
+  const [ranges, setRanges] = useState<DraftRange[]>([]);
   const [key, setKey] = useState(0);
+  const nextKey = React.useRef(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -143,39 +166,157 @@ export function FixedSheet({
     setKind(item?.kind ?? initialKind);
     setDaily(!!item?.daily);
     setOnCard(!!item?.onCard);
+    // An item limited to a range of months (set by Finy) shows as one period.
+    const given: FixedPeriod[] | null = item?.periods?.length
+      ? item.periods
+      : item && (item.fromMonth || item.toMonth)
+        ? [{ from: item.fromMonth ?? null, to: item.toMonth ?? null, amount: item.amount }]
+        : null;
+    setMode(given ? 'periods' : 'all');
+    setRanges((given ?? [{ from: null, to: null, amount: item?.amount ?? 0 }]).map((p) => ({ key: nextKey.current++, ...p })));
     setKey((k) => k + 1);
   }, [visible, item, initialKind]);
 
   const out = direction === 'out';
   const what = out ? 'chi cố định' : 'thu cố định';
+  // Card plan items keep their months where the plan is edited.
+  const credit = out && kind === 'credit';
+  const byPeriod = mode === 'periods' && !credit;
+  const valid = name.trim().length > 0 && (byPeriod ? ranges.length > 0 && ranges.every((r) => r.amount > 0) : amount > 0);
+
+  const changeMode = (m: 'all' | 'periods') => {
+    // The amount carries over to the other way of entering it.
+    if (m === 'periods' && ranges.length === 1 && ranges[0].from === null && ranges[0].to === null) setRanges([{ ...ranges[0], amount }]);
+    if (m === 'all' && !(amount > 0)) setAmount(fixedPeriodsAmountAt(ranges, monthKey()));
+    setMode(m);
+    setKey((k) => k + 1);
+  };
+  const updateRange = (k: number, patch: Partial<DraftRange>) => setRanges((cur) => cur.map((r) => (r.key === k ? { ...r, ...patch } : r)));
+  // Periods that followed each other keep doing so when one of them moves; one that would
+  // overlap the moved period gives way.
+  const setFrom = (i: number, m: string | null) =>
+    setRanges((cur) => {
+      const next = cur.map((r) => ({ ...r }));
+      const row = next[i];
+      const prev = next[i - 1];
+      const joined = !!prev && prev.to !== null && row.from !== null && shiftMonth(prev.to, 1) === row.from;
+      row.from = m;
+      if (prev && m !== null && (joined || prev.to === null || prev.to >= m)) prev.to = shiftMonth(m, -1);
+      return next;
+    });
+  const setTo = (i: number, m: string | null) =>
+    setRanges((cur) => {
+      const next = cur.map((r) => ({ ...r }));
+      const row = next[i];
+      const after = next[i + 1];
+      const joined = !!after && row.to !== null && after.from !== null && shiftMonth(row.to, 1) === after.from;
+      row.to = m;
+      if (after && m !== null && (joined || after.from === null || after.from <= m)) {
+        after.from = shiftMonth(m, 1);
+        if (after.to !== null && after.to < after.from) after.to = after.from;
+      }
+      return next;
+    });
+  const addRange = () =>
+    setRanges((cur) => {
+      const last = cur[cur.length - 1];
+      const now = monthKey();
+      // A last period with no end gets one, a year on, to make room for the new one after it.
+      const lastTo = last.to ?? shiftMonth(last.from !== null && last.from > now ? last.from : now, 11);
+      return [...cur.slice(0, -1), { ...last, to: lastTo }, { key: nextKey.current++, from: shiftMonth(lastTo, 1), to: null, amount: last.amount }];
+    });
+  const removeRange = (i: number) =>
+    setRanges((cur) => {
+      const next = cur.filter((_, j) => j !== i).map((r) => ({ ...r }));
+      const gone = cur[i];
+      // Without the last period, the one that led straight into it runs on.
+      const prev = next[i - 1];
+      if (i === cur.length - 1 && prev && gone.to === null && prev.to !== null && gone.from !== null && shiftMonth(prev.to, 1) === gone.from) prev.to = null;
+      return next;
+    });
+
+  const save = () => {
+    const periods = byPeriod ? ranges.map(({ from, to, amount: a }) => ({ from, to, amount: a })) : undefined;
+    upsertFixed({
+      id: item?.id,
+      name,
+      amount: periods ? fixedPeriodsAmountAt(periods, monthKey()) : amount,
+      direction,
+      kind: out ? kind : undefined,
+      daily: out && kind === 'expense' && daily && !onCard,
+      onCard: out && kind === 'expense' && onCard,
+      periods,
+      fromMonth: credit ? item?.fromMonth : undefined,
+      toMonth: credit ? item?.toMonth : undefined,
+    });
+    onClose();
+  };
+
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
       title={item ? `Sửa khoản ${what}` : `Thêm khoản ${what}`}
-      footer={
-        <Btn
-          label="Lưu"
-          icon="checkmark"
-          disabled={!name.trim() || !(amount > 0)}
-          onPress={() => {
-            upsertFixed({
-              id: item?.id,
-              name,
-              amount,
-              direction,
-              kind: out ? kind : undefined,
-              daily: out && kind === 'expense' && daily && !onCard,
-              onCard: out && kind === 'expense' && onCard,
-              fromMonth: item?.fromMonth,
-              toMonth: item?.toMonth,
-            });
-            onClose();
-          }}
-        />
-      }>
+      footer={<Btn label="Lưu" icon="checkmark" disabled={!valid} onPress={save} />}>
       <Field label="Tên" value={name} onChangeText={setName} placeholder={out ? 'Tiền nhà, điện nước, học phí…' : 'Lương, cho thuê nhà…'} autoFocus={!item} />
-      <AmountField key={key} label="Số tiền mỗi tháng" value={amount} onChange={setAmount} />
+      {credit ? null : (
+        <View style={{ gap: 8 }}>
+          <Txt v="label">Số tiền áp dụng</Txt>
+          <Segmented
+            value={mode}
+            onChange={changeMode}
+            options={[
+              { value: 'all', label: 'Toàn thời gian' },
+              { value: 'periods', label: 'Theo giai đoạn' },
+            ]}
+          />
+        </View>
+      )}
+      {byPeriod ? (
+        <>
+          {ranges.map((r, i) => {
+            const prev = ranges[i - 1];
+            const after = ranges[i + 1];
+            return (
+              <View key={r.key} style={{ gap: 10, backgroundColor: c.cardAlt, borderRadius: 12, padding: 12 }}>
+                <Row>
+                  <Txt v="heading">Giai đoạn {i + 1}</Txt>
+                  {ranges.length > 1 ? (
+                    <IconBtn name="trash-outline" size={18} color={c.negative} label={`Xoá giai đoạn ${i + 1}`} onPress={() => removeRange(i)} />
+                  ) : null}
+                </Row>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+                  <MonthField
+                    label="Từ tháng"
+                    value={r.from}
+                    // After the previous period starts (it keeps at least a month), not after this one ends.
+                    min={prev?.from ? shiftMonth(prev.from, 1) : undefined}
+                    max={r.to ?? undefined}
+                    onChange={(m) => setFrom(i, m)}
+                    none={i === 0 ? { label: 'Từ trước', onPick: () => setFrom(i, null) } : undefined}
+                  />
+                  <MonthField
+                    label="Đến tháng"
+                    value={r.to}
+                    // Not before this period starts; the next one keeps at least a month.
+                    min={r.from ?? undefined}
+                    max={after?.to ? shiftMonth(after.to, -1) : undefined}
+                    onChange={(m) => setTo(i, m)}
+                    none={i === ranges.length - 1 ? { label: 'Không thời hạn', onPick: () => setTo(i, null) } : undefined}
+                  />
+                </View>
+                <AmountField key={`r${key}-${r.key}`} label="Số tiền mỗi tháng" value={r.amount} onChange={(n) => updateRange(r.key, { amount: n })} />
+              </View>
+            );
+          })}
+          <Btn label="Thêm giai đoạn" icon="add" kind="ghost" onPress={addRange} />
+          <Txt v="small">
+            Mỗi giai đoạn có số tiền riêng, được tính vào đúng các tháng đó trong bảng thu chi. Ngoài các giai đoạn, khoản này không được tính.
+          </Txt>
+        </>
+      ) : (
+        <AmountField key={`a${key}`} label="Số tiền mỗi tháng" value={amount} onChange={setAmount} />
+      )}
       {out ? (
         <Segmented
           value={kind}
@@ -197,9 +338,7 @@ export function FixedSheet({
       {out && kind === 'expense' && !onCard ? (
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
       ) : null}
-      {out && kind === 'credit' ? (
-        <Txt v="small">Một khoản dự chi tín dụng mỗi kỳ sao kê; tên là ghi chú của khoản. Nhiều khoản được cộng thành tổng dự chi.</Txt>
-      ) : null}
+      {credit ? <Txt v="small">Một khoản dự chi tín dụng mỗi kỳ sao kê; tên là ghi chú của khoản. Nhiều khoản được cộng thành tổng dự chi.</Txt> : null}
       {item ? (
         <Btn
           label="Xoá khoản này"
@@ -218,8 +357,9 @@ export function FixedSheet({
 }
 
 /**
- * Edit what a fixed item amounts to in one month.
- * The amount can be saved for that month only, or as the new usual amount.
+ * Edit what a fixed item amounts to in one month. The amount can be saved for
+ * that month only, or as the new usual amount (of every month, or of the
+ * period the month is in when the item changes over time).
  */
 export function MonthLineSheet({
   visible,
@@ -241,7 +381,7 @@ export function MonthLineSheet({
 
   useEffect(() => {
     if (!visible || !item) return;
-    setAmount(current ?? item.amount);
+    setAmount(current ?? fixedBase(item, month));
     setKey((k) => k + 1);
     // Only when the sheet opens: later store changes must not reset what is being typed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,6 +390,8 @@ export function MonthLineSheet({
   if (!item) return null;
   const label = monthShort(month);
   const overridden = current !== undefined;
+  const usual = fixedBase(item, month);
+  const period = fixedPeriodAt(item, month);
   return (
     <Sheet
       visible={visible}
@@ -267,22 +409,24 @@ export function MonthLineSheet({
       }>
       <AmountField key={key} label={`Số tiền trong ${label}`} value={amount} onChange={setAmount} autoFocus />
       <Txt v="small">
-        Mức cố định hàng tháng: {money(item.amount)}.{overridden ? ` ${label} đang dùng mức riêng ${money(current)}.` : ''} Nhập 0 nếu tháng này không có khoản này.
+        {period ? `Mức của giai đoạn ${periodLabel(period)}` : 'Mức cố định hàng tháng'}: {money(usual)}.
+        {overridden ? ` ${label} đang dùng mức riêng ${money(current)}.` : ''} Nhập 0 nếu tháng này không có khoản này.
       </Txt>
       <Btn
-        label="Áp dụng cho mọi tháng"
+        label={period ? 'Áp dụng cho cả giai đoạn này' : 'Áp dụng cho mọi tháng'}
         kind="ghost"
         icon="repeat-outline"
         disabled={!(amount > 0)}
         onPress={() => {
-          upsertFixed({ ...item, amount });
+          if (period) upsertFixed({ ...item, periods: (item.periods ?? []).map((p) => (p === period ? { ...p, amount } : p)) });
+          else upsertFixed({ ...item, amount });
           setOverride(month, item.id, null);
           onClose();
         }}
       />
       {overridden ? (
         <Btn
-          label={`Bỏ mức riêng, về ${money(item.amount)}`}
+          label={`Bỏ mức riêng, về ${money(usual)}`}
           kind="ghost"
           icon="arrow-undo-outline"
           onPress={() => {
@@ -663,6 +807,8 @@ const monthYear = (m: string) => `T${Number(m.slice(5, 7))}/${m.slice(0, 4)}`;
 /**
  * Picks a month by tapping: shows the month, and opens a year switcher with
  * the twelve months underneath. Months outside [min, max] cannot be picked.
+ * `none` adds a choice for no month at all (no start / no end limit), shown
+ * as its label while chosen (value null). `readOnly` only shows the month.
  */
 export function MonthField({
   label,
@@ -670,37 +816,58 @@ export function MonthField({
   onChange,
   min,
   max,
+  none,
+  readOnly,
 }: {
   label: string;
-  value: string;
-  onChange: (month: string) => void;
+  value: string | null;
+  onChange?: (month: string) => void;
   min?: string;
   max?: string;
+  none?: { label: string; onPick: () => void };
+  readOnly?: boolean;
 }) {
   const { c, r, fs } = useUi();
   const [open, setOpen] = useState(false);
-  const [year, setYear] = useState(Number(value.slice(0, 4)));
+  const yearOf = () => Number((value ?? min ?? max ?? monthKey()).slice(0, 4));
+  const [year, setYear] = useState(yearOf);
+  const shown = value ? monthYear(value) : (none?.label ?? '—');
+  const box = {
+    backgroundColor: c.card,
+    borderRadius: Math.min(r, 12),
+    borderWidth: 1,
+    borderColor: open ? c.accent : c.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  };
+  if (readOnly) {
+    return (
+      <View style={{ flex: 1 }}>
+        <View accessible accessibilityLabel={`${label}: ${shown}`} style={box}>
+          <Txt v="small">{label}</Txt>
+          <Row>
+            <Text style={{ color: c.text, fontSize: fs(16), fontWeight: '700' }}>{shown}</Text>
+            <Ionicons name="lock-closed-outline" size={14} color={c.muted} />
+          </Row>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={{ flex: 1, gap: 6 }}>
       <Pressable
         onPress={() => {
-          setYear(Number(value.slice(0, 4)));
+          setYear(yearOf());
           setOpen((o) => !o);
         }}
         accessibilityRole="button"
-        accessibilityLabel={`${label}: ${monthYear(value)}. Chạm để chọn tháng.`}
-        style={({ pressed }) => ({
-          backgroundColor: c.card,
-          borderRadius: Math.min(r, 12),
-          borderWidth: 1,
-          borderColor: open ? c.accent : c.border,
-          paddingHorizontal: 10,
-          paddingVertical: 8,
-          opacity: pressed ? 0.7 : 1,
-        })}>
+        accessibilityLabel={`${label}: ${shown}. Chạm để chọn tháng.`}
+        style={({ pressed }) => ({ ...box, opacity: pressed ? 0.7 : 1 })}>
         <Txt v="small">{label}</Txt>
         <Row>
-          <Text style={{ color: c.text, fontSize: fs(16), fontWeight: '700' }}>{monthYear(value)}</Text>
+          <Text numberOfLines={1} style={{ flexShrink: 1, color: c.text, fontSize: fs(16), fontWeight: '700' }}>
+            {shown}
+          </Text>
           <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color={c.muted} />
         </Row>
       </Pressable>
@@ -721,7 +888,7 @@ export function MonthField({
                   key={m}
                   disabled={disabled}
                   onPress={() => {
-                    onChange(m);
+                    onChange?.(m);
                     setOpen(false);
                   }}
                   accessibilityLabel={`Tháng ${i + 1} năm ${year}`}
@@ -739,6 +906,23 @@ export function MonthField({
               );
             })}
           </View>
+          {none ? (
+            <Pressable
+              onPress={() => {
+                none.onPick();
+                setOpen(false);
+              }}
+              accessibilityLabel={none.label}
+              style={{
+                minHeight: 36,
+                borderRadius: 8,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: value === null ? c.accent : c.cardAlt,
+              }}>
+              <Text style={{ color: value === null ? c.onAccent : c.text, fontSize: fs(13), fontWeight: '600' }}>{none.label}</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -752,15 +936,18 @@ interface DraftPeriod {
   prepayment: number;
   override: number | null;
   useOverride: boolean;
+  /** Pays off everything still owed when the period starts. */
+  payOff: boolean;
 }
 
 /**
  * Add or edit a bank loan. The loan is split into periods, each with its own
  * months (picked by tapping), rate and, after the first, a prepayment at its
- * start, entered as the amount still borrowed for that period. The monthly
- * payment of every period is recalculated from the balance owed, the rate and
- * the months left, and follows every change; the bank's own figure can be
- * entered per period and is dropped when that period's terms change.
+ * start, or "pay it all", which settles the loan. The monthly payment of every
+ * period is recalculated from the balance owed, the rate and the months left,
+ * and follows every change; the bank's own figure can be entered per period
+ * and is dropped when that period's terms change. The term is set only at the
+ * top: the last period always runs to its end.
  */
 export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClose: () => void; item?: Loan | null }) {
   const { c } = useUi();
@@ -793,6 +980,7 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
         prepayment: p.prepayment,
         override: p.paymentOverride,
         useOverride: p.paymentOverride !== null,
+        payOff: !!p.payOff,
       })),
     );
     setNote(null);
@@ -800,6 +988,11 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
   }, [visible, item]);
 
   const end = shiftMonth(start, months - 1);
+  // Later periods that fall outside the term while it is being changed are kept aside
+  // (they come back if the term grows again) and are not saved.
+  const shown = periods.length
+    ? [periods[0], ...periods.slice(1).filter((p) => p.from > start && p.from <= end).sort((a, b) => a.from.localeCompare(b.from))]
+    : [];
   const rateOf = (p: DraftPeriod) => parseFloat(p.rateText.replace(',', '.'));
   const draft: Loan = normalizeLoan({
     id: item?.id ?? 'draft',
@@ -807,59 +1000,72 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
     principal,
     months,
     startMonth: start,
-    periods: periods.map((p, i) => ({
+    periods: shown.map((p, i) => ({
       from: i === 0 ? start : p.from,
       ratePct: Number.isFinite(rateOf(p)) ? rateOf(p) : 0,
       prepayment: i === 0 ? 0 : p.prepayment,
       paymentOverride: p.useOverride && p.override ? p.override : null,
+      ...(i > 0 && p.payOff ? { payOff: true } : {}),
     })),
   });
-  const valid = name.trim().length > 0 && principal > 0 && months >= 1 && periods.length > 0 && periods.every((p) => Number.isFinite(rateOf(p)) && rateOf(p) >= 0);
+  // A period that pays everything off has nothing left to charge interest on: no rate needed.
+  const valid =
+    name.trim().length > 0 &&
+    principal > 0 &&
+    months >= 1 &&
+    shown.length > 0 &&
+    shown.every((p, i) => (i > 0 && p.payOff) || (Number.isFinite(rateOf(p)) && rateOf(p) >= 0));
   const summary = valid ? loanPeriods(draft) : [];
   const now = monthKey();
   const paid = loanPaidBefore(draft, now);
+  const final = valid ? loanFinalMonth(draft) : end;
+  const settled = shown.length > 1 && shown[shown.length - 1].payOff;
 
   // Changing what a period repays or its rate means a new calculation: the bank's
   // old figure for that period and every later one no longer applies.
   const termsChangedFrom = (index: number) => {
     // Decided from the periods as they are now; the update itself is applied by React later.
-    if (!periods.some((p, i) => i >= index && p.useOverride)) return;
-    setPeriods((cur) => cur.map((p, i) => (i < index || !p.useOverride ? p : { ...p, useOverride: false, override: null })));
+    const affected = new Set(shown.slice(index).filter((p) => p.useOverride).map((p) => p.key));
+    if (!affected.size) return;
+    setPeriods((cur) => cur.map((p) => (affected.has(p.key) ? { ...p, useOverride: false, override: null } : p)));
     setNote('Đã bỏ số trả theo ngân hàng của giai đoạn bị thay đổi.');
   };
   const update = (k: number, patch: Partial<DraftPeriod>) => setPeriods((cur) => cur.map((p) => (p.key === k ? { ...p, ...patch } : p)));
 
-  // Keeps every later period inside the term after the start or the term changed.
-  const clamp = (list: DraftPeriod[], s0: string, e0: string) => {
-    const out = list.filter((p, i) => i === 0 || (p.from > s0 && p.from <= e0));
-    return out.length ? out : list.slice(0, 1);
-  };
+  // The term is changed only here (chips, number of months, first month), never by a period.
   const changeStart = (m: string) => {
     setStart(m);
-    setPeriods((cur) => clamp(cur, m, shiftMonth(m, months - 1)));
     termsChangedFrom(0);
   };
   const changeMonths = (n: number) => {
     setMonths(n);
     setMonthsText(String(n));
-    setPeriods((cur) => clamp(cur, start, shiftMonth(start, n - 1)));
     termsChangedFrom(0);
-  };
-  const monthsBetweenKeys = (a: string, b: string) => {
-    const [y1, m1] = a.split('-').map(Number);
-    const [y2, m2] = b.split('-').map(Number);
-    return (y2 - y1) * 12 + (m2 - m1);
   };
 
   const addPeriod = () => {
-    const last = periods[periods.length - 1];
-    const lastFrom = periods.length === 1 ? start : last.from;
+    const last = shown[shown.length - 1];
+    const lastFrom = shown.length === 1 ? start : last.from;
     // A year after the last period starts, but never before next month and never past the end.
     let from = shiftMonth(lastFrom, 12);
     if (from <= now) from = shiftMonth(now, 1);
     if (from <= lastFrom) from = shiftMonth(lastFrom, 1);
     if (from > end) return;
-    setPeriods((cur) => [...cur, { key: nextKey.current++, from, rateText: last.rateText, prepayment: 0, override: null, useOverride: false }]);
+    // Periods kept aside outside the term are dropped: the new one takes their place.
+    setPeriods([...shown, { key: nextKey.current++, from, rateText: last.rateText, prepayment: 0, override: null, useOverride: false, payOff: false }]);
+  };
+
+  // "Pay it all" settles the loan when the period starts: later periods have nothing left to repay.
+  const setPayOff = (index: number, on: boolean) => {
+    const p = shown[index];
+    if (on) {
+      const later = new Set(shown.slice(index + 1).map((x) => x.key));
+      setPeriods((cur) => cur.filter((x) => !later.has(x.key)).map((x) => (x.key === p.key ? { ...x, payOff: true, useOverride: false, override: null } : x)));
+      setNote(later.size ? `Đã bỏ ${later.size} giai đoạn sau ${monthYear(p.from)}: khoản vay đã được trả hết.` : null);
+    } else {
+      update(p.key, { payOff: false, prepayment: 0 });
+      setNote(null);
+    }
   };
 
   return (
@@ -873,7 +1079,9 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
           icon="checkmark"
           disabled={!valid}
           onPress={() => {
-            upsert({ id: item?.id, name, principal, months, startMonth: start, periods: draft.periods });
+            // A payoff also records what it paid.
+            const saved = draft.periods.map((p, i) => (p.payOff ? { ...p, prepayment: summary[i]?.prepayment ?? p.prepayment } : p));
+            upsert({ id: item?.id, name, principal, months, startMonth: start, periods: saved });
             onClose();
           }}
         />
@@ -893,20 +1101,24 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
             const digits = t.replace(/\D/g, '').slice(0, 3);
             setMonthsText(digits);
             const n = parseInt(digits, 10);
-            if (n >= 1 && n <= 600) changeMonths(n);
+            if (n >= 1 && n <= 600) {
+              setMonths(n);
+              termsChangedFrom(0);
+            }
           }}
         />
         <Txt v="small">
-          Từ {monthYear(start)} đến {monthYear(end)} · {months} kỳ trả
+          Từ {monthYear(start)} đến {monthYear(end)} · {months} kỳ trả{final < end ? ` · tất toán ${monthYear(final)}` : ''}
         </Txt>
       </View>
 
-      {periods.map((p, i) => {
-        const last = i === periods.length - 1;
+      {shown.map((p, i) => {
+        const last = i === shown.length - 1;
         const from = i === 0 ? start : p.from;
-        const to = last ? end : shiftMonth(periods[i + 1].from, -1);
+        const to = last ? end : shiftMonth(shown[i + 1].from, -1);
         const sum = summary[i];
-        const nextFrom = periods[i + 2]?.from;
+        const nextFrom = shown[i + 2]?.from;
+        const payOff = i > 0 && p.payOff;
         return (
           <View key={p.key} style={{ gap: 10, backgroundColor: c.cardAlt, borderRadius: 12, padding: 12 }}>
             <Row>
@@ -926,11 +1138,11 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
             </Row>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
               <MonthField
-                label="Từ tháng"
+                label={payOff ? 'Tháng trả hết' : 'Từ tháng'}
                 value={from}
                 // The first period starts with the first payment; later ones between their neighbours.
-                min={i === 0 ? undefined : shiftMonth(i === 1 ? start : periods[i - 1].from, 1)}
-                max={i === 0 ? undefined : last ? end : shiftMonth(periods[i + 1].from, -1)}
+                min={i === 0 ? undefined : shiftMonth(i === 1 ? start : shown[i - 1].from, 1)}
+                max={i === 0 ? undefined : last ? end : shiftMonth(shown[i + 1].from, -1)}
                 onChange={(m) => {
                   if (i === 0) changeStart(m);
                   else {
@@ -940,21 +1152,22 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
                   }
                 }}
               />
-              <MonthField
-                label="Đến tháng"
-                value={to}
-                min={from}
-                // The last period's end is the end of the loan; otherwise the next period moves with it.
-                max={last ? shiftMonth(start, 599) : shiftMonth(nextFrom ?? shiftMonth(end, 1), -2)}
-                onChange={(m) => {
-                  if (last) changeMonths(monthsBetweenKeys(start, m) + 1);
-                  else {
-                    // The next period starts the month after; what it starts from changes.
-                    update(periods[i + 1].key, { from: shiftMonth(m, 1) });
+              {payOff ? null : last ? (
+                // The last period runs to the end of the loan; the term is changed above.
+                <MonthField label="Đến hết hạn vay" value={end} readOnly />
+              ) : (
+                <MonthField
+                  label="Đến tháng"
+                  value={to}
+                  min={from}
+                  // The next period moves with it and keeps at least one month.
+                  max={shiftMonth(nextFrom ?? shiftMonth(end, 1), -2)}
+                  onChange={(m) => {
+                    update(shown[i + 1].key, { from: shiftMonth(m, 1) });
                     termsChangedFrom(i + 1);
-                  }
-                }}
-              />
+                  }}
+                />
+              )}
             </View>
             {i === 0 ? (
               <AmountField
@@ -974,16 +1187,37 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
                     <Txt v="small">{money(sum.carried)}</Txt>
                   </Row>
                 ) : null}
+                <Toggle
+                  label="Trả toàn bộ"
+                  hint={`Tự nhập toàn bộ dư nợ vào ô trả trước: khoản vay được tất toán trong ${monthYear(from)}.`}
+                  value={payOff}
+                  onChange={(v) => setPayOff(i, v)}
+                />
                 <AmountField
+                  sync
                   key={`pp${key}-${p.key}`}
                   label="Số tiền trả trước trong giai đoạn này"
-                  value={p.prepayment}
+                  value={payOff ? (sum?.carried ?? 0) : p.prepayment}
                   onChange={(n) => {
-                    update(p.key, { prepayment: Math.max(0, n) });
+                    // An amount of their own replaces "pay it all".
+                    update(p.key, { prepayment: Math.max(0, n), payOff: false });
                     termsChangedFrom(i);
                   }}
                 />
-                {sum ? (
+                {sum && payOff ? (
+                  <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
+                    <Row>
+                      <Txt v="label">Dư nợ còn lại</Txt>
+                      <Txt v="heading" color={c.positive}>
+                        {money(0)}
+                      </Txt>
+                    </Row>
+                    <Txt v="small">
+                      Tất toán: {money(sum.prepayment)} được tính là tiền chi ra trong {monthYear(from)}; từ {monthYear(shiftMonth(from, 1))} không còn
+                      trả hàng tháng.
+                    </Txt>
+                  </View>
+                ) : sum ? (
                   <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
                     <Row>
                       <Txt v="label">Dư nợ còn lại sau trả trước</Txt>
@@ -1002,50 +1236,54 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
                 ) : null}
               </>
             )}
-            <Field
-              label="Lãi suất (%/năm)"
-              value={p.rateText}
-              placeholder={i === 0 ? '6' : 'Lãi thả nổi dự kiến'}
-              onChangeText={(t) => {
-                update(p.key, { rateText: t.replace(/[^0-9.,]/g, '') });
-                termsChangedFrom(i);
-              }}
-            />
-            {sum ? (
-              <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
-                <Row>
-                  <Txt v="label">Trả mỗi tháng</Txt>
-                  <Txt v="title">{money(sum.payment)}</Txt>
-                </Row>
-                <Txt v="small">
-                  {p.useOverride && p.override
-                    ? `Theo ngân hàng. Tính theo trả góp đều: ${money(sum.calculated)}.`
-                    : `Gốc + lãi chia đều trên ${monthsBetweenKeys(from, end) + 1} tháng còn lại.`}
-                </Txt>
-              </View>
-            ) : null}
-            <Toggle
-              label="Ngân hàng tính số trả khác"
-              hint="Bật nếu số trả thực tế của giai đoạn này khác số tính ở trên."
-              value={p.useOverride}
-              onChange={(v) => {
-                update(p.key, { useOverride: v, override: v ? p.override ?? sum?.calculated ?? null : p.override });
-                setNote(null);
-              }}
-            />
-            {p.useOverride ? (
-              <AmountField
-                key={`o${key}-${p.key}`}
-                label="Số trả mỗi tháng theo ngân hàng"
-                value={p.override ?? sum?.calculated ?? 0}
-                onChange={(n) => update(p.key, { override: n || null })}
-              />
-            ) : null}
+            {payOff ? null : (
+              <>
+                <Field
+                  label="Lãi suất (%/năm)"
+                  value={p.rateText}
+                  placeholder={i === 0 ? '6' : 'Lãi thả nổi dự kiến'}
+                  onChangeText={(t) => {
+                    update(p.key, { rateText: t.replace(/[^0-9.,]/g, '') });
+                    termsChangedFrom(i);
+                  }}
+                />
+                {sum ? (
+                  <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
+                    <Row>
+                      <Txt v="label">Trả mỗi tháng</Txt>
+                      <Txt v="title">{money(sum.payment)}</Txt>
+                    </Row>
+                    <Txt v="small">
+                      {p.useOverride && p.override
+                        ? `Theo ngân hàng. Tính theo trả góp đều: ${money(sum.calculated)}.`
+                        : `Gốc + lãi chia đều trên ${monthsBetweenKeys(from, end) + 1} tháng còn lại.`}
+                    </Txt>
+                  </View>
+                ) : null}
+                <Toggle
+                  label="Ngân hàng tính số trả khác"
+                  hint="Bật nếu số trả thực tế của giai đoạn này khác số tính ở trên."
+                  value={p.useOverride}
+                  onChange={(v) => {
+                    update(p.key, { useOverride: v, override: v ? p.override ?? sum?.calculated ?? null : p.override });
+                    setNote(null);
+                  }}
+                />
+                {p.useOverride ? (
+                  <AmountField
+                    key={`o${key}-${p.key}`}
+                    label="Số trả mỗi tháng theo ngân hàng"
+                    value={p.override ?? sum?.calculated ?? 0}
+                    onChange={(n) => update(p.key, { override: n || null })}
+                  />
+                ) : null}
+              </>
+            )}
           </View>
         );
       })}
 
-      <Btn label="Thêm giai đoạn (đổi lãi suất, trả trước)" icon="add" kind="ghost" onPress={addPeriod} disabled={!valid} />
+      {settled ? null : <Btn label="Thêm giai đoạn (đổi lãi suất, trả trước)" icon="add" kind="ghost" onPress={addPeriod} disabled={!valid} />}
       {note ? <Txt v="small" color={c.warning}>{note}</Txt> : null}
 
       {valid ? (
@@ -1063,8 +1301,8 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
             </Row>
           ) : null}
           <Row>
-            <Txt v="small">Kỳ cuối</Txt>
-            <Txt v="small">{monthYear(end)}</Txt>
+            <Txt v="small">{final < end ? 'Tất toán' : 'Kỳ cuối'}</Txt>
+            <Txt v="small">{monthYear(final)}</Txt>
           </Row>
         </View>
       ) : null}
@@ -1085,6 +1323,12 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
     </Sheet>
   );
 }
+
+const monthsBetweenKeys = (a: string, b: string) => {
+  const [y1, m1] = a.split('-').map(Number);
+  const [y2, m2] = b.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+};
 
 type PlanScope = 'month' | 'range' | 'all';
 

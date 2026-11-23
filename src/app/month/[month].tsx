@@ -4,9 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
+import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, periodLabel, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, monthFlow, type Line } from '../../lib/finance';
+import { creditCycle, fixedPeriodAt, monthFlow, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -64,6 +64,13 @@ export default function MonthDetail() {
     }
   };
 
+  // For an item whose amount changes over time: the period this month is in.
+  const periodOf = (l: Line) => {
+    if (l.source !== 'fixed') return null;
+    const p = fixedPeriodAt(budget.fixed.find((f) => f.id === l.id) ?? {}, month);
+    return p ? periodLabel(p) : null;
+  };
+
   const renderLine = (l: Line, positive?: boolean) => (
     <Pressable
       key={`${l.source}-${l.id}`}
@@ -76,12 +83,16 @@ export default function MonthDetail() {
             {l.source === 'oneoff'
               ? 'Phát sinh'
               : l.source === 'loan'
-                ? l.id.endsWith('#prepay')
-                  ? 'Trả trước khoản vay · đầu giai đoạn mới'
-                  : 'Vay ngân hàng · trả góp đều'
+                ? l.id.endsWith('#payoff')
+                  ? 'Trả hết dư nợ · kết thúc khoản vay'
+                  : l.id.endsWith('#prepay')
+                    ? 'Trả trước khoản vay · đầu giai đoạn mới'
+                    : 'Vay ngân hàng · trả góp đều'
               : l.overridden
                 ? `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`
-                : l.kind === 'debt'
+                : periodOf(l)
+                  ? `Cố định · giai đoạn ${periodOf(l)}`
+                  : l.kind === 'debt'
                   ? 'Cố định · trả nợ vay'
                   : l.daily
                     ? 'Cố định · quỹ chi tiêu hằng ngày'

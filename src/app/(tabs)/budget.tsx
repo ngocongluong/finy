@@ -4,13 +4,30 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, fixedActive, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, fixedActive, flowTable, loanDebtNow, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
 import type { Account, FixedItem, Instalment, Loan } from '../../lib/types';
 
 type View3 = 'table' | 'fixed' | 'accounts';
+
+/**
+ * A fixed item in the lists: its amount this month, and for one that changes
+ * over time, until when it lasts, or when it starts / ended (then muted).
+ */
+function fixedNow(f: FixedItem, month: string): { amount: number; when?: string; muted: boolean } {
+  const periods = f.periods?.length ? f.periods : f.fromMonth || f.toMonth ? [{ from: f.fromMonth ?? null, to: f.toMonth ?? null, amount: f.amount }] : null;
+  if (!periods) return { amount: f.amount, muted: false };
+  const count = periods.length > 1 ? `${periods.length} giai đoạn` : '';
+  const say = (text: string) => [count, text].filter(Boolean).join(' · ');
+  const cur = periods.find((p) => (p.from === null || month >= p.from) && (p.to === null || month <= p.to));
+  if (cur) return { amount: cur.amount, when: say(cur.to ? `đến ${monthLabel(cur.to).toLowerCase()}` : ''), muted: false };
+  const next = periods.find((p) => p.from !== null && p.from > month);
+  if (next?.from) return { amount: next.amount, when: say(`bắt đầu ${monthLabel(next.from).toLowerCase()}`), muted: true };
+  const last = periods[periods.length - 1];
+  return { amount: last.amount, when: say(last.to ? `đã hết từ sau ${monthLabel(last.to).toLowerCase()}` : ''), muted: true };
+}
 
 /** One tappable line: name on the left, amount on the right. */
 function Line({ name, sub, amount, color, onPress, icon }: { name: string; sub?: string; amount: number; color?: string; onPress: () => void; icon?: React.ReactNode }) {
@@ -213,9 +230,10 @@ export default function Budget() {
               <Amount value={base.fixedIn} color={c.muted} />
             </Row>
             {fixedIn.length === 0 ? <Txt v="label">Chưa có nguồn thu nào. Thêm lương và các khoản thu đều đặn khác.</Txt> : null}
-            {fixedIn.map((f) => (
-              <Line key={f.id} name={f.name} amount={f.amount} onPress={() => setFixedSheet({ direction: 'in', item: f })} />
-            ))}
+            {fixedIn.map((f) => {
+              const s = fixedNow(f, now);
+              return <Line key={f.id} name={f.name} sub={s.when || undefined} amount={s.amount} color={s.muted ? c.muted : undefined} onPress={() => setFixedSheet({ direction: 'in', item: f })} />;
+            })}
             <Btn label="Thêm nguồn thu" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'in', item: null })} />
           </Card>
 
@@ -238,15 +256,20 @@ export default function Budget() {
               onPress={() => setPlanOpen(true)}
             />
             {fixedOut.length === 0 ? <Txt v="label">Chưa có khoản chi nào. Thêm tiền nhà, học phí, trả nợ, quỹ chi tiêu hằng ngày…</Txt> : null}
-            {fixedOut.map((f) => (
-              <Line
-                key={f.id}
-                name={f.name}
-                sub={f.kind === 'debt' ? 'Trả nợ vay' : f.onCard ? 'Trả qua thẻ tín dụng mỗi kỳ' : f.daily ? 'Quỹ chi tiêu hằng ngày' : undefined}
-                amount={f.amount}
-                onPress={() => setFixedSheet({ direction: 'out', item: f })}
-              />
-            ))}
+            {fixedOut.map((f) => {
+              const s = fixedNow(f, now);
+              const what = f.kind === 'debt' ? 'Trả nợ vay' : f.onCard ? 'Trả qua thẻ tín dụng mỗi kỳ' : f.daily ? 'Quỹ chi tiêu hằng ngày' : '';
+              return (
+                <Line
+                  key={f.id}
+                  name={f.name}
+                  sub={[what, s.when].filter(Boolean).join(' · ') || undefined}
+                  amount={s.amount}
+                  color={s.muted ? c.muted : undefined}
+                  onPress={() => setFixedSheet({ direction: 'out', item: f })}
+                />
+              );
+            })}
             <Btn label="Thêm khoản chi" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'out', item: null })} />
           </Card>
 
@@ -260,14 +283,19 @@ export default function Budget() {
             ) : null}
             {loans.map((l) => {
               const paid = loanPaidBefore(l, now);
-              const running = loanPart(l, now) !== null;
+              // A loan paid off early stops at the month it is settled.
+              const final = loanFinalMonth(l);
+              const early = final < loanEndMonth(l);
+              const running = loanPart(l, now) !== null && now <= final;
               const rate = loanPeriodAt(l, now).ratePct;
-              const periods = l.periods.length > 1 ? ` · ${l.periods.length} giai đoạn` : '';
+              const extra = early ? ` · tất toán ${monthLabel(final).toLowerCase()}` : l.periods.length > 1 ? ` · ${l.periods.length} giai đoạn` : '';
               const sub = running
-                ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${periods}`
+                ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${extra}`
                 : now < l.startMonth
                   ? `Bắt đầu trả ${monthLabel(l.startMonth).toLowerCase()}`
-                  : 'Đã trả xong';
+                  : early
+                    ? `Đã tất toán ${monthLabel(final).toLowerCase()}`
+                    : 'Đã trả xong';
               return <Line key={l.id} name={l.name} sub={sub} amount={running ? loanPayment(l, now) : loanPayment(l)} color={running ? c.text : c.muted} onPress={() => setLoan({ open: true, item: l })} />;
             })}
             <Btn label="Thêm khoản vay" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setLoan({ open: true, item: null })} />

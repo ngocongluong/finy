@@ -3,7 +3,7 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
-import { markCreditItem, migrateLegacyBudget, normalizeLoan } from './finance';
+import { fixedBase, fixedPeriodsAmountAt, markCreditItem, migrateLegacyBudget, normalizeFixedPeriods, normalizeLoan } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
@@ -247,15 +247,24 @@ export const useStore = create<State>((set, get) => ({
 
   upsertFixed: (item) => {
     const out = item.direction === 'out';
+    let periods = normalizeFixedPeriods(item.periods);
+    let amount = item.amount;
+    // One period open at both ends is simply the same amount every month.
+    if (periods.length === 1 && periods[0].from === null && periods[0].to === null) {
+      amount = periods[0].amount;
+      periods = [];
+    }
+    if (periods.length) amount = fixedPeriodsAmountAt(periods, monthKey());
     const full: FixedItem = {
       id: item.id ?? uid(),
       name: item.name.trim(),
-      amount: Math.max(0, Math.round(item.amount)),
+      amount: Math.max(0, Math.round(amount)),
       direction: item.direction,
       kind: out ? (item.kind ?? 'expense') : undefined,
       daily: out && item.daily && !item.onCard && item.kind !== 'credit' && item.kind !== 'debt' ? true : undefined,
       onCard: out && item.onCard && (item.kind ?? 'expense') === 'expense' ? true : undefined,
-      ...monthRange(item.fromMonth, item.toMonth),
+      // Periods carry their own months; otherwise the item may be limited to one range.
+      ...(periods.length ? { periods } : monthRange(item.fromMonth, item.toMonth)),
     };
     const cur = get().fixed;
     let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];
@@ -283,8 +292,8 @@ export const useStore = create<State>((set, get) => ({
     if (!item) return;
     const overrides: Overrides = { ...get().overrides };
     const byId = { ...(overrides[month] ?? {}) };
-    // An adjustment equal to the usual amount is no adjustment.
-    if (amount === null || Math.round(amount) === item.amount) delete byId[fixedId];
+    // An adjustment equal to the usual amount of that month (its period's, if it has periods) is no adjustment.
+    if (amount === null || Math.round(amount) === fixedBase(item, month)) delete byId[fixedId];
     else byId[fixedId] = Math.max(0, Math.round(amount));
     if (Object.keys(byId).length) overrides[month] = byId;
     else delete overrides[month];

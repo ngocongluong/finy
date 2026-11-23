@@ -1,7 +1,7 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FixedItem, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, FixedItem, FixedPeriod, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
@@ -32,7 +32,8 @@ export function loanEndMonth(l: Pick<Loan, 'startMonth' | 'months'>): string {
 /**
  * Brings a stored loan into shape: older app versions kept one rate and one
  * bank figure on the loan itself; periods are sorted, the first starts with the
- * first payment, and periods outside the term or on the same month are dropped.
+ * first payment, and periods outside the term, on the same month, or after the
+ * period that pays the loan off are dropped.
  */
 export function normalizeLoan(raw: unknown): Loan {
   const r = raw as Partial<Loan> & { ratePct?: number; paymentOverride?: number | null };
@@ -47,12 +48,16 @@ export function normalizeLoan(raw: unknown): Loan {
   for (const p of sorted) {
     const first = periods.length === 0;
     if (!first && (p.from <= startMonth || p.from > end || p.from === periods[periods.length - 1].from)) continue;
+    const payOff = !first && !!p.payOff;
     periods.push({
       from: first ? startMonth : p.from,
       ratePct: Math.min(100, Math.max(0, Number(p.ratePct) || 0)),
       prepayment: first ? 0 : Math.max(0, Math.round(Number(p.prepayment) || 0)),
-      paymentOverride: p.paymentOverride && p.paymentOverride > 0 ? Math.round(p.paymentOverride) : null,
+      paymentOverride: !payOff && p.paymentOverride && p.paymentOverride > 0 ? Math.round(p.paymentOverride) : null,
+      ...(payOff ? { payOff: true } : {}),
     });
+    // Nothing is owed once the loan is paid off: later periods have nothing to change.
+    if (payOff) break;
   }
   return { id: r.id ?? '', name: r.name ?? '', principal: Math.max(0, Math.round(r.principal ?? 0)), months, startMonth, periods };
 }
@@ -66,6 +71,8 @@ export interface LoanMonth {
   period: number;
   /** Paid early at the start of this month (only when a period starts here). */
   prepayment: number;
+  /** The prepayment settles the loan: everything that was owed. */
+  payOff?: boolean;
   /** Owed at the start of the month, after any prepayment. */
   opening: number;
   interest: number;
@@ -94,11 +101,14 @@ export function loanSchedule(loan: Loan): LoanMonth[] {
   for (let k = 0; k < l.months; k++) {
     const month = shiftMonth(l.startMonth, k);
     let prepayment = 0;
+    let payOff = false;
     if (pi + 1 < l.periods.length && l.periods[pi + 1].from === month) {
       pi++;
       const p = l.periods[pi];
       if (pi > 0) {
-        prepayment = Math.min(balance, p.prepayment);
+        // Paying off takes whatever is owed by then, however the earlier periods turned out.
+        payOff = !!p.payOff;
+        prepayment = payOff ? balance : Math.min(balance, p.prepayment);
         balance -= prepayment;
       }
       rate = p.ratePct / 100 / 12;
@@ -107,7 +117,7 @@ export function loanSchedule(loan: Loan): LoanMonth[] {
     const interest = Math.round(balance * rate);
     const due = balance + interest;
     const paid = k === l.months - 1 ? due : Math.min(payment, due);
-    out.push({ month, part: k + 1, period: pi, prepayment, opening: balance, interest, payment: paid, closing: due - paid });
+    out.push({ month, part: k + 1, period: pi, prepayment, ...(payOff ? { payOff } : {}), opening: balance, interest, payment: paid, closing: due - paid });
     balance = due - paid;
   }
   scheduleCache.set(loan, out);
@@ -142,6 +152,16 @@ export function loanPaidBefore(l: Loan, month: string): number {
   return Math.min(l.months, Math.max(0, monthsBetween(l.startMonth, month)));
 }
 
+/**
+ * The last month anything is paid: the month the loan is paid off when that
+ * happens early, otherwise the last payment of the term.
+ */
+export function loanFinalMonth(l: Loan): string {
+  const s = loanSchedule(l);
+  for (let i = s.length - 1; i >= 0; i--) if (s[i].payment > 0 || s[i].prepayment > 0) return s[i].month;
+  return loanEndMonth(l);
+}
+
 /** Total interest over the life of the loan. */
 export function loanTotalInterest(l: Loan): number {
   return loanSchedule(l).reduce((s, m) => s + m.interest, 0);
@@ -170,6 +190,8 @@ export interface LoanPeriodSummary {
   /** The payment as calculated, whatever the bank's figure. */
   calculated: number;
   paymentOverride: number | null;
+  /** The period pays off everything owed when it starts. */
+  payOff: boolean;
 }
 
 export function loanPeriods(loan: Loan): LoanPeriodSummary[] {
@@ -191,6 +213,7 @@ export function loanPeriods(loan: Loan): LoanPeriodSummary[] {
       payment: first.payment,
       calculated: annuityPayment(first.opening, p.ratePct, left),
       paymentOverride: p.paymentOverride,
+      payOff: !!p.payOff,
     };
   });
 }
@@ -234,15 +257,73 @@ export function instalmentLines(plans: Instalment[] | undefined, month: string):
   return out;
 }
 
-/** Whether a fixed item applies in a month (items can be limited to a range of months). */
-export function fixedActive(item: Pick<FixedItem, 'fromMonth' | 'toMonth'>, month: string): boolean {
+const inPeriod = (p: FixedPeriod, month: string) => (p.from === null || month >= p.from) && (p.to === null || month <= p.to);
+
+/** The period of a fixed item that covers a month, or null (also for items without periods). */
+export function fixedPeriodAt(item: Pick<FixedItem, 'periods'>, month: string): FixedPeriod | null {
+  let hit: FixedPeriod | null = null;
+  for (const p of item.periods ?? []) if (inPeriod(p, month)) hit = p;
+  return hit;
+}
+
+/**
+ * Whether a fixed item applies in a month: inside one of its periods when it
+ * has them, otherwise inside its range of months (unset = every month).
+ */
+export function fixedActive(item: Pick<FixedItem, 'fromMonth' | 'toMonth' | 'periods'>, month: string): boolean {
+  if (item.periods?.length) return fixedPeriodAt(item, month) !== null;
   return (!item.fromMonth || month >= item.fromMonth) && (!item.toMonth || month <= item.toMonth);
+}
+
+/** A fixed item's usual amount in a month: its period's amount, or its one amount; 0 when it does not apply. */
+export function fixedBase(item: FixedItem, month: string): number {
+  if (item.periods?.length) return fixedPeriodAt(item, month)?.amount ?? 0;
+  return fixedActive(item, month) ? item.amount : 0;
 }
 
 /** A fixed item's amount in a given month: the month's own adjustment if there is one. */
 export function fixedAmount(b: Pick<Budget, 'overrides'>, item: FixedItem, month: string): number {
   const o = b.overrides[month]?.[item.id];
-  return o === undefined ? item.amount : o;
+  return o === undefined ? fixedBase(item, month) : o;
+}
+
+/**
+ * Periods in shape: valid months, each from ≤ to, sorted, whole đồng. A
+ * period that starts inside the previous one ends that one the month before
+ * (the later entry wins on the same start); only the first may be open at the
+ * start and only the last open at the end.
+ */
+export function normalizeFixedPeriods(raw: unknown): FixedPeriod[] {
+  if (!Array.isArray(raw)) return [];
+  const month = (m: unknown) => (typeof m === 'string' && /^\d{4}-\d{2}$/.test(m) ? m : null);
+  const list = raw
+    .filter((p) => p && typeof p === 'object')
+    .map((p: { from?: unknown; to?: unknown; amount?: unknown }): FixedPeriod => {
+      let from = month(p.from);
+      let to = month(p.to);
+      if (from && to && to < from) [from, to] = [to, from];
+      return { from, to, amount: Math.max(0, Math.round(Number(p.amount) || 0)) };
+    })
+    .sort((a, b) => (a.from ?? '').localeCompare(b.from ?? ''));
+  const out: FixedPeriod[] = [];
+  for (const p of list) {
+    const prev = out[out.length - 1];
+    if (prev && (prev.from ?? '') === (p.from ?? '')) {
+      out[out.length - 1] = p;
+      continue;
+    }
+    // p.from is set here: only the first period sorted can be open at the start.
+    if (prev && (prev.to === null || prev.to >= p.from!)) prev.to = shiftMonth(p.from!, -1);
+    out.push({ ...p });
+  }
+  return out;
+}
+
+/** The amount to show for periods in `month`: the one that applies, else the next to start, else the last. */
+export function fixedPeriodsAmountAt(periods: FixedPeriod[], month: string): number {
+  const now = periods.find((p) => inPeriod(p, month));
+  if (now) return now.amount;
+  return (periods.find((p) => p.from !== null && p.from > month) ?? periods[periods.length - 1])?.amount ?? 0;
 }
 
 // ---- credit-card statement cycle ----
@@ -368,7 +449,9 @@ const total = (list: { amount: number }[]) => list.reduce((s, i) => s + i.amount
 export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthFlow {
   const fixedLine = (f: FixedItem): Line => {
     const amount = fixedAmount(b, f, month);
-    return { source: 'fixed', id: f.id, name: f.name, amount, base: f.amount, overridden: amount !== f.amount, kind: f.kind, daily: f.daily, onCard: f.onCard };
+    // The usual amount of this month: the period's amount for items that change over time.
+    const base = fixedBase(f, month);
+    return { source: 'fixed', id: f.id, name: f.name, amount, base, overridden: amount !== base, kind: f.kind, daily: f.daily, onCard: f.onCard };
   };
   const oneOffLine = (o: OneOff): Line => ({ source: 'oneoff', id: o.id, name: o.name, amount: o.amount });
 
@@ -411,7 +494,11 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   for (const l of b.loans ?? []) {
     const e = loanMonth(l, month);
     if (!e) continue;
-    if (e.prepayment > 0) loanLines.push({ source: 'loan', id: `${l.id}#prepay`, name: `Trả trước: ${l.name}`, amount: e.prepayment, kind: 'debt' });
+    if (e.prepayment > 0) {
+      // Paid early when a period starts; "payoff" when it settles everything still owed.
+      const tag = e.payOff ? 'payoff' : 'prepay';
+      loanLines.push({ source: 'loan', id: `${l.id}#${tag}`, name: `${e.payOff ? 'Tất toán' : 'Trả trước'}: ${l.name}`, amount: e.prepayment, kind: 'debt' });
+    }
     if (e.payment > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.payment, kind: 'debt' });
   }
   const fixedOut = total(fixedOutLines) + total(loanLines);

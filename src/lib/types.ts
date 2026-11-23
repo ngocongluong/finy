@@ -29,6 +29,25 @@ export interface FixedItem {
    */
   fromMonth?: string;
   toMonth?: string;
+  /**
+   * An amount that changes over time: each period has its own monthly amount.
+   * When set, the item counts only in the months a period covers (at that
+   * period's amount), `fromMonth` / `toMonth` are not used, and `amount` is
+   * the amount that applied when the item was saved (for lists and messages).
+   */
+  periods?: FixedPeriod[];
+}
+
+/**
+ * A stretch of months in which a fixed item has one monthly amount. Periods
+ * are sorted and do not overlap; months between two periods have none.
+ */
+export interface FixedPeriod {
+  /** First month (YYYY-MM); null = from the beginning (first period only). */
+  from: string | null;
+  /** Last month (YYYY-MM), included; null = no end (last period only). */
+  to: string | null;
+  amount: number;
 }
 
 /** An expected one-off income or expense in one specific month. */
@@ -56,6 +75,12 @@ export interface LoanPeriod {
    * from the calculation (day-count interest, fees). null = calculated.
    */
   paymentOverride: number | null;
+  /**
+   * Everything still owed is paid at the start of the period (the loan is
+   * settled; `prepayment` then records that amount). Never on the first
+   * period; no period follows one.
+   */
+  payOff?: boolean;
 }
 
 /**

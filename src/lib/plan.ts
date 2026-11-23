@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { fixedActive, loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
+import { fixedActive, fixedBase, loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -48,9 +48,10 @@ export function resolvePlan(
   const { fixed, oneOffs, overrides } = budget;
   const base = monthFlow({ fixed, oneOffs: [], overrides: {} }, currentMonth);
   const years = Math.min(10, Math.max(5, Math.round(plan.years)));
+  // Repayments entered as fixed expenses, at what they are now; later changes count month by month below.
   const fixedDebts: PlanDebt[] = fixed
-    .filter((f) => f.direction === 'out' && f.kind === 'debt' && f.amount > 0)
-    .map((f): PlanDebt => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }))
+    .filter((f) => f.direction === 'out' && f.kind === 'debt' && fixedBase(f, currentMonth) > 0)
+    .map((f): PlanDebt => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: fixedBase(f, currentMonth) }))
     // Bank loans are known exactly: what is still owed now, the rate and the payment.
     .concat(
       (budget.loans ?? [])
@@ -83,23 +84,24 @@ export function resolvePlan(
     extraByMonth[index] = (extraByMonth[index] ?? 0) + net;
   };
   for (const o of oneOffs) add(o.month, o.direction === 'in' ? o.amount : -o.amount);
-  // Fixed items limited to some months: the base month includes what applies now;
-  // months where an item starts or stops applying differ by its amount.
+  // Fixed items whose amount changes over time (periods, or limited to some months):
+  // the base month includes what applies now; other months differ by the change.
   for (const f of fixed) {
-    if (!f.fromMonth && !f.toMonth) continue;
-    const now = fixedActive(f, currentMonth);
+    if (!f.periods?.length && !f.fromMonth && !f.toMonth) continue;
+    const now = fixedBase(f, currentMonth);
+    const sign = f.direction === 'in' ? 1 : -1;
     for (let m = currentMonth; m <= lastMonth; m = shiftMonth(m, 1)) {
-      const on = fixedActive(f, m);
-      if (on === now) continue;
-      const sign = f.direction === 'in' ? 1 : -1;
-      add(m, on ? sign * f.amount : -sign * f.amount);
+      const change = fixedBase(f, m) - now;
+      if (change) add(m, sign * change);
     }
   }
+  // A month's own amount replaces the usual amount of that month (only where the item applies).
   for (const [month, byId] of Object.entries(overrides)) {
     for (const f of fixed) {
       const amount = byId[f.id];
-      if (amount === undefined) continue;
-      add(month, f.direction === 'in' ? amount - f.amount : f.amount - amount);
+      if (amount === undefined || !fixedActive(f, month)) continue;
+      const usual = fixedBase(f, month);
+      add(month, f.direction === 'in' ? amount - usual : usual - amount);
     }
   }
 

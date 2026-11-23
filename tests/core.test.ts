@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, creditCycle, loanDebtNow, loanMonth, loanPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, creditCycle, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
@@ -617,4 +617,77 @@ test('only bank mail that reads like a transaction is sent on to Claude', () => 
 test('html email bodies become readable text', () => {
   const text = htmlToText('<html><head><style>p{}</style></head><body><p>S&#7889; ti&#7873;n:&nbsp;<b>1.250.000 VND</b></p><div>T&amp;T Mart</div></body></html>');
   assert.equal(text, 'Số tiền: 1.250.000 VND\nT&T Mart');
+});
+
+test('a fixed income in periods: each month counts its own period amount, none outside them', () => {
+  const salary: FixedItem = {
+    id: 'p1',
+    name: 'Lương',
+    amount: 30_000_000,
+    direction: 'in',
+    periods: [
+      { from: null, to: '2027-03', amount: 30_000_000 },
+      { from: '2027-04', to: '2027-12', amount: 33_000_000 },
+      { from: '2028-03', to: null, amount: 36_000_000 },
+    ],
+  };
+  const b: Budget = { fixed: [salary], oneOffs: [], overrides: {} };
+  assert.deepEqual(
+    ['2026-11', '2027-03', '2027-04', '2027-12', '2028-01', '2028-02', '2028-03', '2040-01'].map((m) => monthFlow(b, m).income),
+    [30_000_000, 30_000_000, 33_000_000, 33_000_000, 0, 0, 36_000_000, 36_000_000],
+  );
+  assert.equal(fixedPeriodAt(salary, '2028-01'), null);
+  // A month's own amount still wins, and the line knows the period amount it replaces.
+  const adj: Budget = { ...b, overrides: { '2027-05': { p1: 40_000_000 }, '2028-01': { p1: 1 } } };
+  const line = monthFlow(adj, '2027-05').incomeLines[0];
+  assert.deepEqual([line.amount, line.base, line.overridden], [40_000_000, 33_000_000, true]);
+  // The table: April 2027 (month 6 from November 2026) gets the raise.
+  const rows = flowTable(adj, '2026-11', 18);
+  assert.deepEqual([rows[0].income, rows[5].income, rows[6].income, rows[14].income, rows[16].income], [30_000_000, 33_000_000, 40_000_000, 0, 36_000_000]);
+  // The long-range plan sees each change against the current month; an adjustment in a month
+  // outside every period counts for nothing, as in the table.
+  const inp = resolvePlan(DEFAULT_PLAN, adj, [], '2026-11');
+  assert.equal(inp.monthlyIncome, 30_000_000);
+  assert.deepEqual([inp.extraByMonth?.[5], inp.extraByMonth?.[6], inp.extraByMonth?.[7], inp.extraByMonth?.[15], inp.extraByMonth?.[17]], [undefined, 3_000_000, 10_000_000, -30_000_000, 6_000_000]);
+});
+
+test('fixed-item periods are put in order and never overlap', () => {
+  const periods = normalizeFixedPeriods([
+    { from: '2027-06', to: null, amount: 3.6 },
+    { from: '2027-03', to: '2026-12', amount: 1 },
+    { from: null, to: '2027-01', amount: 2 },
+  ]);
+  assert.deepEqual(periods, [
+    { from: null, to: '2026-11', amount: 2 },
+    { from: '2026-12', to: '2027-03', amount: 1 },
+    { from: '2027-06', to: null, amount: 4 },
+  ]);
+  assert.deepEqual(normalizeFixedPeriods('nope'), []);
+  // The amount shown in lists: the one that applies, else the next to start.
+  assert.deepEqual(['2026-05', '2027-04', '2030-01'].map((m) => fixedPeriodsAmountAt(periods, m)), [2, 4, 4]);
+});
+
+test('paying a loan off: the whole balance in that month, nothing after, later periods dropped', () => {
+  const base = mkLoan({ principal: 1_200_000_000, ratePct: 6, months: 360, startMonth: '2026-11' });
+  const loan = normalizeLoan({
+    ...base,
+    periods: [
+      ...base.periods,
+      { from: '2027-03', ratePct: 8, prepayment: 5, paymentOverride: 1, payOff: true },
+      { from: '2028-01', ratePct: 9, prepayment: 0, paymentOverride: null },
+    ],
+  });
+  assert.deepEqual(loan.periods.slice(1), [{ from: '2027-03', ratePct: 8, prepayment: 5, paymentOverride: null, payOff: true }]);
+  const owed = loanBalance(loan, loanPaidBefore(loan, '2027-03'));
+  assert.ok(owed > 1_100_000_000 && owed < 1_200_000_000);
+  const e = loanMonth(loan, '2027-03')!;
+  assert.deepEqual([e.prepayment, e.payOff, e.payment, e.closing], [owed, true, 0, 0]);
+  assert.deepEqual([loanFinalMonth(loan), loanFinalMonth(base)], ['2027-03', '2056-10']);
+  assert.equal(loanDebtNow([loan], '2027-04'), 0);
+  assert.deepEqual([loanPeriods(loan)[1].payOff, loanPeriods(loan)[1].prepayment], [true, owed]);
+  // The month it is paid off shows one line for it; later months have none.
+  const b: Budget = { fixed: [], oneOffs: [], overrides: {}, loans: [loan] };
+  assert.deepEqual(monthFlow(b, '2027-03').expenseLines.map((l) => [l.id, l.name, l.amount]), [['l#payoff', 'Tất toán: Vay', owed]]);
+  assert.equal(monthFlow(b, '2027-04').expenseLines.length, 0);
+  assert.ok(loanTotalInterest(loan) < loanTotalInterest(base) / 50);
 });

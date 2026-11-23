@@ -5,7 +5,7 @@ import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
 import Constants from 'expo-constants';
 import { Alert } from 'react-native';
 import { z } from 'zod';
-import { creditCycle, loanDebtNow, loanEndMonth, loanPeriods, loanTotalInterest, projectedCash, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
+import { creditCycle, loanDebtNow, loanEndMonth, loanPeriodAt, loanPeriods, loanTotalInterest, projectedCash, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
 import { dateKey, fmtTime, fmtVND, monthKey, monthLabel, shiftMonth, uid } from './format';
 import { project, resolvePlan } from './plan';
 import { useStore } from './store';
@@ -39,7 +39,7 @@ export function describeError(e: unknown): string {
 const SYSTEM = `Bạn là Finy, trợ lý tài chính cá nhân sống trong một ứng dụng Android riêng tư, chỉ có một người dùng duy nhất tại Việt Nam. Người dùng tự xây app này để quản lý tiền của chính mình: bảng thu chi hàng tháng, chi tiêu hằng ngày (nhập tay và giao dịch HSBC lấy từ email), tổng tiền hiện có, và kế hoạch tài chính 5–10 năm.
 
 Bảng thu chi
-App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khoản vay ngân hàng được nhập riêng (số tiền vay, số tháng, tháng trả đầu tiên) và chia thành các giai đoạn: mỗi giai đoạn có lãi suất riêng (cố định hoặc thả nổi dự kiến) và có thể có khoản trả trước ở đầu giai đoạn; app tính lại số trả mỗi tháng ở đầu mỗi giai đoạn theo dư nợ còn lại và số tháng còn lại, cộng vào chi cố định trong thời gian vay, và tính khoản trả trước là tiền ra trong tháng đó. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định.
+App tính thu, chi và số để dành được của từng tháng từ ba thứ người dùng nhập: các nguồn thu cố định hàng tháng, các khoản chi cố định hàng tháng (gồm cả trả nợ), và các khoản phát sinh dự kiến (thu hoặc chi) gắn với một tháng cụ thể. Để dành được = tổng thu − tổng chi của tháng đó; người dùng không nhập số để dành. Một khoản lặp lại mọi tháng là khoản cố định; một khoản chỉ xảy ra ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe, du lịch) là khoản phát sinh, nhập cho đúng những tháng đó. Khoản vay ngân hàng được nhập riêng (số tiền vay, số tháng, tháng trả đầu tiên) và chia thành các giai đoạn: mỗi giai đoạn có lãi suất riêng (cố định hoặc thả nổi dự kiến) và có thể có khoản trả trước ở đầu giai đoạn (hoặc trả toàn bộ dư nợ để tất toán khoản vay trong tháng đó); app tính lại số trả mỗi tháng ở đầu mỗi giai đoạn theo dư nợ còn lại và số tháng còn lại, cộng vào chi cố định trong thời gian vay, và tính khoản trả trước là tiền ra trong tháng đó. Khi một khoản cố định chỉ khác đi ở vài tháng (tháng này lương cao hơn, tháng sau không phải đóng tiền gửi xe), hãy điều chỉnh riêng cho những tháng đó thay vì sửa khoản cố định. Khi số tiền của một khoản cố định đổi theo từng giai đoạn dài (lương tăng từ một tháng trở đi, một nguồn thu chỉ có trong một khoảng thời gian), hãy đặt các giai đoạn cho khoản đó: mỗi giai đoạn từ tháng nào đến tháng nào với số tiền riêng; ngoài các giai đoạn, khoản đó không được tính.
 
 Thẻ tín dụng
 Một khoản chi cố định có thể được đánh dấu là "dự chi tín dụng": số tiền người dùng dự định quẹt thẻ mỗi kỳ sao kê. Kỳ sao kê kết thúc vào ngày sao kê hàng tháng và được tính vào tháng có ngày sao kê đó (ví dụ ngày sao kê 14: kỳ 15/11–14/12 thuộc tháng 12). Kỳ chốt vào ngày sao kê của tháng nào thì được trả bằng lương tháng đó. Khi kỳ còn mở, chi của tháng tính theo dự chi (hoặc số đã quẹt nếu nhiều hơn); khi kỳ đã chốt, chi của tháng tính theo đúng số đã quẹt, thay cho dự chi. Giao dịch thẻ lấy từ email HSBC. Các khoản trả góp qua thẻ (người dùng nhập tổng tiền và số tháng) được chia đều và cộng một phần vào mỗi kỳ. Nếu số đã quẹt trong kỳ vượt dự chi, hãy nói rõ cho người dùng biết họ đang vượt bao nhiêu.
@@ -131,11 +131,22 @@ function buildTools(log: (action: string) => void) {
     betaZodTool({
       name: 'set_fixed_item',
       description:
-        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks a planned credit-card spend per statement cycle (there can be several; the name of each is its note; with from_month/to_month an item applies to one month only, a range of months, or, without them, every month; e.g. "Ăn uống", and the app shows their total with the notes joined); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for particular months only, use set_month_amount instead.',
+        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. An amount that changes over time (a salary rise from some month on, an income that only lasts a while) is given as periods, each from a month to a month with its own monthly amount; the item then counts only inside its periods, at each period\'s amount, in the cash-flow table. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks a planned credit-card spend per statement cycle (there can be several; the name of each is its note; with from_month/to_month an item applies to one month only, a range of months, or, without them, every month; e.g. "Ăn uống", and the app shows their total with the notes joined); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for one or a few particular months only, use set_month_amount instead.',
       inputSchema: z.object({
         id: z.string().optional(),
         name: z.string(),
-        amount: z.number().describe('VND per month, positive'),
+        amount: z.number().optional().describe('VND per month, positive, the same every month. Not needed when periods are given; when editing, omit to keep it'),
+        periods: z
+          .array(
+            z.object({
+              from_month: z.string().regex(/^\d{4}-\d{2}$/).nullable().describe('First month (YYYY-MM); null = from the beginning (first period only)'),
+              to_month: z.string().regex(/^\d{4}-\d{2}$/).nullable().describe('Last month, included (YYYY-MM); null = no end (last period only)'),
+              amount: z.number().min(0).describe('VND per month in this period'),
+            }),
+          )
+          .nullable()
+          .optional()
+          .describe('Amounts that change over time, periods in order and not overlapping; months outside every period have none. null removes the periods (back to one amount every month). Omit to keep what the item has. Send every period, not only the changed one'),
         direction: z.enum(['in', 'out']),
         kind: z.enum(['expense', 'debt', 'credit']).optional(),
         daily: z.boolean().optional(),
@@ -146,18 +157,29 @@ function buildTools(log: (action: string) => void) {
       run: (i) => {
         const existing = i.id ? s().fixed.find((f) => f.id === i.id) : undefined;
         if (i.id && !existing) return `No fixed item with id ${i.id}.`;
+        if (i.periods?.length && (i.kind ?? existing?.kind) === 'credit') return 'Card plan items use from_month / to_month (one item per note), not periods.';
+        const periods =
+          i.periods === undefined
+            ? existing?.periods
+            : i.periods === null
+              ? undefined
+              : i.periods.map((p) => ({ from: p.from_month, to: p.to_month, amount: p.amount }));
+        const amount = i.amount ?? (periods?.length ? 0 : existing?.amount);
+        if (amount === undefined) return 'Give amount (or periods).';
         const item = s().upsertFixed({
           id: i.id,
           name: i.name,
-          amount: i.amount,
+          amount,
           direction: i.direction,
           kind: i.kind ?? existing?.kind,
           daily: i.daily ?? existing?.daily,
           onCard: i.on_card ?? existing?.onCard,
+          periods,
           fromMonth: i.from_month === undefined ? existing?.fromMonth : i.from_month ?? undefined,
           toMonth: i.to_month === undefined ? existing?.toMonth : i.to_month ?? undefined,
         });
-        log(`${i.id ? 'Đã sửa' : 'Đã thêm'} ${item.direction === 'in' ? 'thu' : 'chi'} cố định "${item.name}": ${fmtVND(item.amount)}/tháng`);
+        const how = item.periods?.length ? `${item.periods.length} giai đoạn` : `${fmtVND(item.amount)}/tháng`;
+        log(`${i.id ? 'Đã sửa' : 'Đã thêm'} ${item.direction === 'in' ? 'thu' : 'chi'} cố định "${item.name}": ${how}`);
         return `Saved ${JSON.stringify(item)}`;
       },
     }),
@@ -260,13 +282,14 @@ function buildTools(log: (action: string) => void) {
     betaZodTool({
       name: 'set_loan_period',
       description:
-        'Add or change a later period of a bank loan, starting at from_month (after the first payment month, within the term): a new interest rate (e.g. when a fixed rate turns floating) and/or a prepayment made at the start of that month. Give the prepayment directly (prepayment) or the balance the user wants to owe after it (new_principal). The app recalculates the monthly payment from that month on over the months left. payment_override sets the bank\'s own figure for the period.',
+        'Add or change a later period of a bank loan, starting at from_month (after the first payment month, within the term): a new interest rate (e.g. when a fixed rate turns floating) and/or a prepayment made at the start of that month. Give the prepayment directly (prepayment) or the balance the user wants to owe after it (new_principal), or pay_off=true to repay everything still owed then (the loan is settled that month; later periods are removed). The app recalculates the monthly payment from that month on over the months left. payment_override sets the bank\'s own figure for the period.',
       inputSchema: z.object({
         loan_id: z.string(),
         from_month: z.string().regex(/^\d{4}-\d{2}$/),
-        rate_pct: z.number().min(0).max(100),
+        rate_pct: z.number().min(0).max(100).optional().describe('Annual rate from this month on; omit to keep the rate in effect then'),
         prepayment: z.number().min(0).optional(),
         new_principal: z.number().min(0).optional(),
+        pay_off: z.boolean().optional().describe('true = repay the whole balance at the start of from_month (tất toán)'),
         payment_override: z.number().nullable().optional(),
       }),
       run: (i) => {
@@ -275,11 +298,20 @@ function buildTools(log: (action: string) => void) {
         if (i.from_month <= l.startMonth || i.from_month > loanEndMonth(l)) return `from_month must be after ${l.startMonth} and not after ${loanEndMonth(l)}.`;
         // What is owed just before the period starts.
         const owed = loanBalance(l, loanPaidBefore(l, i.from_month));
-        const prepayment = i.prepayment ?? (i.new_principal !== undefined ? Math.max(0, owed - i.new_principal) : l.periods.find((p) => p.from === i.from_month)?.prepayment ?? 0);
+        const same = l.periods.find((p) => p.from === i.from_month);
+        const explicit = i.prepayment !== undefined || i.new_principal !== undefined;
+        const payOff = i.pay_off ?? (explicit ? false : !!same?.payOff);
+        const prepayment = payOff ? owed : i.prepayment ?? (i.new_principal !== undefined ? Math.max(0, owed - i.new_principal) : same?.prepayment ?? 0);
+        const ratePct = i.rate_pct ?? same?.ratePct ?? loanPeriodAt(l, i.from_month).ratePct;
         const others = l.periods.filter((p) => p.from !== i.from_month);
-        const next = s().upsertLoan({ ...l, periods: [...others, { from: i.from_month, ratePct: i.rate_pct, prepayment, paymentOverride: i.payment_override ?? null }] });
+        const period = { from: i.from_month, ratePct, prepayment, paymentOverride: payOff ? null : (i.payment_override ?? null), ...(payOff ? { payOff: true } : {}) };
+        const next = s().upsertLoan({ ...l, periods: [...others, period] });
         const sum = loanPeriods(next).find((p) => p.from === i.from_month);
-        log(`Đã đặt giai đoạn từ ${monthLabel(i.from_month).toLowerCase()} cho "${l.name}": ${i.rate_pct}%/năm${prepayment ? `, trả trước ${fmtVND(prepayment)}` : ''}, trả ${fmtVND(sum?.payment ?? 0)}/tháng`);
+        log(
+          payOff
+            ? `Đã đặt tất toán "${l.name}" ${monthLabel(i.from_month).toLowerCase()}: trả hết ${fmtVND(sum?.prepayment ?? prepayment)}`
+            : `Đã đặt giai đoạn từ ${monthLabel(i.from_month).toLowerCase()} cho "${l.name}": ${ratePct}%/năm${prepayment ? `, trả trước ${fmtVND(prepayment)}` : ''}, trả ${fmtVND(sum?.payment ?? 0)}/tháng`,
+        );
         return `Saved ${JSON.stringify(loanPeriods(next))}`;
       },
     }),
