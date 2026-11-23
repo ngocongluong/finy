@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
+import { fixedActive, loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -83,6 +83,18 @@ export function resolvePlan(
     extraByMonth[index] = (extraByMonth[index] ?? 0) + net;
   };
   for (const o of oneOffs) add(o.month, o.direction === 'in' ? o.amount : -o.amount);
+  // Fixed items limited to some months: the base month includes what applies now;
+  // months where an item starts or stops applying differ by its amount.
+  for (const f of fixed) {
+    if (!f.fromMonth && !f.toMonth) continue;
+    const now = fixedActive(f, currentMonth);
+    for (let m = currentMonth; m <= lastMonth; m = shiftMonth(m, 1)) {
+      const on = fixedActive(f, m);
+      if (on === now) continue;
+      const sign = f.direction === 'in' ? 1 : -1;
+      add(m, on ? sign * f.amount : -sign * f.amount);
+    }
+  }
   for (const [month, byId] of Object.entries(overrides)) {
     for (const f of fixed) {
       const amount = byId[f.id];

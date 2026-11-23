@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, fixedActive, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -74,6 +74,9 @@ export default function Budget() {
   // The card plan shows as one line: its total, named by the notes of its items.
   const creditPlan = budget.fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
   const [planOpen, setPlanOpen] = useState(false);
+  const statementDayForPlan = useStore((s) => s.settings.statementDay);
+  // The plan for the statement cycle open today; items limited to other months are counted apart.
+  const creditPlanNow = creditPlan.filter((f) => fixedActive(f, cycleMonthOf(dateKey(), statementDayForPlan)));
   const base = monthFlow({ ...budget, oneOffs: [], overrides: {} }, now);
   const empty = budget.fixed.length === 0;
   const cell = { flex: 1, textAlign: 'right' as const };
@@ -223,8 +226,14 @@ export default function Budget() {
             </Row>
             <Line
               name="Dự chi tín dụng"
-              sub={creditPlan.length ? creditPlan.map((f) => f.name).join(', ') : 'Chưa đặt — chạm để nhập các khoản dự chi'}
-              amount={creditPlan.reduce((s, f) => s + f.amount, 0)}
+              sub={
+                creditPlan.length
+                  ? [creditPlanNow.map((f) => f.name).join(', '), creditPlan.length > creditPlanNow.length ? `+${creditPlan.length - creditPlanNow.length} khoản tháng khác` : '']
+                      .filter(Boolean)
+                      .join(' · ') || 'Không có khoản nào áp dụng kỳ này'
+                  : 'Chưa đặt — chạm để nhập các khoản dự chi'
+              }
+              amount={creditPlanNow.reduce((s, f) => s + f.amount, 0)}
               icon={<Ionicons name="card-outline" size={20} color={c.muted} />}
               onPress={() => setPlanOpen(true)}
             />
@@ -340,7 +349,7 @@ export default function Budget() {
         value={cash?.amount ?? 0}
         onSave={(n) => setCash(n ?? 0)}
       />
-      <CreditPlanSheet visible={planOpen} onClose={() => setPlanOpen(false)} />
+      <CreditPlanSheet visible={planOpen} onClose={() => setPlanOpen(false)} month={cycleMonth} />
       <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} />
       <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />
     </Screen>

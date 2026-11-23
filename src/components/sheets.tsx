@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Pressable, Switch, Text, View } from 'react-native';
-import { instalmentAmount, loanBalance, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
+import { creditCycle, instalmentAmount, loanBalance, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
 import type { Account, AccountKind, FixedItem, Instalment, Loan, OneOff, Tx } from '../lib/types';
@@ -159,7 +159,17 @@ export function FixedSheet({
           icon="checkmark"
           disabled={!name.trim() || !(amount > 0)}
           onPress={() => {
-            upsertFixed({ id: item?.id, name, amount, direction, kind: out ? kind : undefined, daily: out && kind === 'expense' && daily && !onCard, onCard: out && kind === 'expense' && onCard });
+            upsertFixed({
+              id: item?.id,
+              name,
+              amount,
+              direction,
+              kind: out ? kind : undefined,
+              daily: out && kind === 'expense' && daily && !onCard,
+              onCard: out && kind === 'expense' && onCard,
+              fromMonth: item?.fromMonth,
+              toMonth: item?.toMonth,
+            });
             onClose();
           }}
         />
@@ -1076,45 +1086,73 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
   );
 }
 
+type PlanScope = 'month' | 'range' | 'all';
+
 interface PlanRow {
   id?: string;
   note: string;
   amount: number;
   key: number;
+  /** One month only (the month the plan is looked at for), a range of months, or every month. */
+  scope: PlanScope;
+  from: string;
+  to: string;
 }
 
 /**
  * The credit-card plan per statement cycle, as several items with a note each.
- * Saved as fixed expenses of kind "credit" (the note is the item's name).
+ * Every item applies to the month the plan is opened for only, to a range of
+ * months, or to every month. Saved as fixed expenses of kind "credit" (the
+ * note is the item's name; the range is fromMonth / toMonth).
  */
-export function CreditPlanSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export function CreditPlanSheet({ visible, onClose, month }: { visible: boolean; onClose: () => void; month: string }) {
   const { c } = useUi();
   const money = useMoney();
   const fixed = useStore((s) => s.fixed);
+  const statementDay = useStore((s) => s.settings.statementDay);
   const upsertFixed = useStore((s) => s.upsertFixed);
   const deleteFixed = useStore((s) => s.deleteFixed);
   const [rows, setRows] = useState<PlanRow[]>([]);
   const nextKey = React.useRef(0);
 
+  const newRow = (): PlanRow => ({ note: '', amount: 0, key: nextKey.current++, scope: 'all', from: month, to: shiftMonth(month, 5) });
+
   useEffect(() => {
     if (!visible) return;
     const items = fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
-    const loaded = items.map((f) => ({ id: f.id, note: f.name, amount: f.amount, key: nextKey.current++ }));
-    setRows(loaded.length ? loaded : [{ note: '', amount: 0, key: nextKey.current++ }]);
+    const loaded = items.map((f): PlanRow => {
+      const scope: PlanScope = !f.fromMonth && !f.toMonth ? 'all' : f.fromMonth === month && f.toMonth === month ? 'month' : 'range';
+      return {
+        id: f.id,
+        note: f.name,
+        amount: f.amount,
+        key: nextKey.current++,
+        scope,
+        from: f.fromMonth ?? month,
+        to: f.toMonth ?? f.fromMonth ?? shiftMonth(month, 5),
+      };
+    });
+    setRows(loaded.length ? loaded : [newRow()]);
     // Only when the sheet opens: edits in progress must not be reset.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [visible, month]);
 
   const update = (key: number, patch: Partial<PlanRow>) => setRows((cur) => cur.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const totalAmount = rows.reduce((s, r) => s + (r.amount > 0 ? r.amount : 0), 0);
-  const notes = rows.filter((r) => r.amount > 0 && r.note.trim()).map((r) => r.note.trim()).join(', ');
+  const appliesHere = (r: PlanRow) => r.scope === 'all' || (r.scope === 'month' ? true : r.from <= month && month <= r.to);
+  const counted = rows.filter((r) => r.amount > 0 && appliesHere(r));
+  const totalAmount = counted.reduce((s, r) => s + r.amount, 0);
+  const notes = counted.filter((r) => r.note.trim()).map((r) => r.note.trim()).join(', ');
   const valid = rows.every((r) => r.amount <= 0 || r.note.trim());
+  const cycle = creditCycle(month, statementDay);
+  const cycleText = `kỳ ${Number(cycle.start.slice(8, 10))}/${Number(cycle.start.slice(5, 7))} – ${Number(cycle.end.slice(8, 10))}/${Number(cycle.end.slice(5, 7))}`;
 
   const save = () => {
     const keep = new Set<string>();
     for (const r of rows) {
       if (!(r.amount > 0)) continue;
-      const saved = upsertFixed({ id: r.id, name: r.note.trim(), amount: r.amount, direction: 'out', kind: 'credit' });
+      const range =
+        r.scope === 'all' ? { fromMonth: undefined, toMonth: undefined } : r.scope === 'month' ? { fromMonth: month, toMonth: month } : { fromMonth: r.from, toMonth: r.to };
+      const saved = upsertFixed({ id: r.id, name: r.note.trim(), amount: r.amount, direction: 'out', kind: 'credit', ...range });
       keep.add(saved.id);
     }
     for (const f of fixed) if (f.direction === 'out' && f.kind === 'credit' && !keep.has(f.id)) deleteFixed(f.id);
@@ -1122,8 +1160,8 @@ export function CreditPlanSheet({ visible, onClose }: { visible: boolean; onClos
   };
 
   return (
-    <Sheet visible={visible} onClose={onClose} title="Dự chi tín dụng mỗi kỳ" footer={<Btn label="Lưu" icon="checkmark" disabled={!valid} onPress={save} />}>
-      <Txt v="small">Số tiền dự định quẹt thẻ mỗi kỳ sao kê, chia theo khoản. Finy so tổng dự chi với số thực xài và báo khi vượt.</Txt>
+    <Sheet visible={visible} onClose={onClose} title="Dự chi tín dụng" footer={<Btn label="Lưu" icon="checkmark" disabled={!valid} onPress={save} />}>
+      <Txt v="small">Số tiền dự định quẹt thẻ mỗi kỳ sao kê, chia theo khoản. Mỗi khoản chọn được áp dụng chỉ tháng này, một giai đoạn, hoặc toàn bộ thời gian.</Txt>
       {rows.map((r, i) => (
         <View key={r.key} style={{ gap: 8, backgroundColor: c.cardAlt, borderRadius: 12, padding: 12 }}>
           <Row>
@@ -1133,12 +1171,34 @@ export function CreditPlanSheet({ visible, onClose }: { visible: boolean; onClos
           <Field label="Ghi chú" value={r.note} onChangeText={(t) => update(r.key, { note: t })} placeholder="Ăn uống, xăng xe, mua sắm…" />
           <AmountField label="Số tiền mỗi kỳ" value={r.amount} onChange={(n) => update(r.key, { amount: n })} />
           {r.amount > 0 && !r.note.trim() ? <Txt v="small" color={c.warning}>Nhập ghi chú cho khoản này.</Txt> : null}
+          <Txt v="label">Áp dụng</Txt>
+          <Segmented
+            value={r.scope}
+            onChange={(scope) => update(r.key, { scope })}
+            options={[
+              { value: 'month', label: 'Chỉ tháng này' },
+              { value: 'range', label: 'Từ – đến' },
+              { value: 'all', label: 'Toàn bộ' },
+            ]}
+          />
+          {r.scope === 'month' ? (
+            <Txt v="small">
+              Chỉ {monthLabel(month).toLowerCase()} ({cycleText}).
+            </Txt>
+          ) : r.scope === 'range' ? (
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+              <MonthField label="Từ tháng" value={r.from} max={r.to} onChange={(m) => update(r.key, { from: m })} />
+              <MonthField label="Đến tháng" value={r.to} min={r.from} onChange={(m) => update(r.key, { to: m })} />
+            </View>
+          ) : (
+            <Txt v="small">Mọi tháng.</Txt>
+          )}
         </View>
       ))}
-      <Btn label="Thêm khoản dự chi" icon="add" kind="ghost" onPress={() => setRows((cur) => [...cur, { note: '', amount: 0, key: nextKey.current++ }])} />
+      <Btn label="Thêm khoản dự chi" icon="add" kind="ghost" onPress={() => setRows((cur) => [...cur, newRow()])} />
       <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 4 }}>
         <Row>
-          <Txt v="label">Tổng dự chi mỗi kỳ</Txt>
+          <Txt v="label">Tổng dự chi {monthLabel(month).toLowerCase()}</Txt>
           <Txt v="title">{money(totalAmount)}</Txt>
         </Row>
         {notes ? <Txt v="small">{notes}</Txt> : null}

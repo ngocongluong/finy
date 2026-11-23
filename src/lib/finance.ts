@@ -234,6 +234,11 @@ export function instalmentLines(plans: Instalment[] | undefined, month: string):
   return out;
 }
 
+/** Whether a fixed item applies in a month (items can be limited to a range of months). */
+export function fixedActive(item: Pick<FixedItem, 'fromMonth' | 'toMonth'>, month: string): boolean {
+  return (!item.fromMonth || month >= item.fromMonth) && (!item.toMonth || month <= item.toMonth);
+}
+
 /** A fixed item's amount in a given month: the month's own adjustment if there is one. */
 export function fixedAmount(b: Pick<Budget, 'overrides'>, item: FixedItem, month: string): number {
   const o = b.overrides[month]?.[item.id];
@@ -367,8 +372,10 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   };
   const oneOffLine = (o: OneOff): Line => ({ source: 'oneoff', id: o.id, name: o.name, amount: o.amount });
 
-  const fixedInLines = b.fixed.filter((f) => f.direction === 'in').map(fixedLine);
-  const allOutLines = b.fixed.filter((f) => f.direction === 'out').map(fixedLine);
+  // Items limited to a range of months count only in those months.
+  const active = b.fixed.filter((f) => fixedActive(f, month));
+  const fixedInLines = active.filter((f) => f.direction === 'in').map(fixedLine);
+  const allOutLines = active.filter((f) => f.direction === 'out').map(fixedLine);
   // Charged to the card: part of the cycle's card spending, not a separate expense.
   const onCardLines = allOutLines.filter((l) => l.onCard && l.kind !== 'credit' && l.kind !== 'debt');
   const fixedOutLines = allOutLines.filter((l) => !onCardLines.includes(l));

@@ -131,7 +131,7 @@ function buildTools(log: (action: string) => void) {
     betaZodTool({
       name: 'set_fixed_item',
       description:
-        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks a planned credit-card spend per statement cycle (there can be several; the name of each is its note, e.g. "Ăn uống", and the app shows their total with the notes joined); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for particular months only, use set_month_amount instead.',
+        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks a planned credit-card spend per statement cycle (there can be several; the name of each is its note; with from_month/to_month an item applies to one month only, a range of months, or, without them, every month; e.g. "Ăn uống", and the app shows their total with the notes joined); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for particular months only, use set_month_amount instead.',
       inputSchema: z.object({
         id: z.string().optional(),
         name: z.string(),
@@ -140,6 +140,8 @@ function buildTools(log: (action: string) => void) {
         kind: z.enum(['expense', 'debt', 'credit']).optional(),
         daily: z.boolean().optional(),
         on_card: z.boolean().optional().describe('Ordinary expense charged to the credit card every month (e.g. an instalment plan); it is then added to each statement cycle instead of being a separate expense'),
+        from_month: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().describe('First month the item applies in (YYYY-MM); null = no start limit'),
+        to_month: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().describe('Last month the item applies in (YYYY-MM); null = no end limit. For a credit plan item that is for one month only, give the same month for both'),
       }),
       run: (i) => {
         const existing = i.id ? s().fixed.find((f) => f.id === i.id) : undefined;
@@ -152,6 +154,8 @@ function buildTools(log: (action: string) => void) {
           kind: i.kind ?? existing?.kind,
           daily: i.daily ?? existing?.daily,
           onCard: i.on_card ?? existing?.onCard,
+          fromMonth: i.from_month === undefined ? existing?.fromMonth : i.from_month ?? undefined,
+          toMonth: i.to_month === undefined ? existing?.toMonth : i.to_month ?? undefined,
         });
         log(`${i.id ? 'Đã sửa' : 'Đã thêm'} ${item.direction === 'in' ? 'thu' : 'chi'} cố định "${item.name}": ${fmtVND(item.amount)}/tháng`);
         return `Saved ${JSON.stringify(item)}`;

@@ -100,6 +100,15 @@ interface State {
   wipe: () => Promise<void>;
 }
 
+/** A valid month range (from ≤ to), or nothing when the item applies every month. */
+function monthRange(from?: string, to?: string): { fromMonth?: string; toMonth?: string } {
+  const ok = (m?: string) => (m && /^\d{4}-\d{2}$/.test(m) ? m : undefined);
+  let a = ok(from);
+  let b = ok(to);
+  if (a && b && a > b) [a, b] = [b, a];
+  return { ...(a ? { fromMonth: a } : {}), ...(b ? { toMonth: b } : {}) };
+}
+
 function persist(key: string, value: unknown) {
   db.kvSet(key, value).catch((e) => console.warn(`Failed to save ${key}`, e));
 }
@@ -246,6 +255,7 @@ export const useStore = create<State>((set, get) => ({
       kind: out ? (item.kind ?? 'expense') : undefined,
       daily: out && item.daily && !item.onCard && item.kind !== 'credit' && item.kind !== 'debt' ? true : undefined,
       onCard: out && item.onCard && (item.kind ?? 'expense') === 'expense' ? true : undefined,
+      ...monthRange(item.fromMonth, item.toMonth),
     };
     const cur = get().fixed;
     let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];

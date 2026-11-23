@@ -588,6 +588,26 @@ test('the long-range plan follows a loan period by period', () => {
   assert.ok(Math.abs(p.rows[2].netWorth - (2_000_000_000 - 1_200_000_000 - loanTotalInterest(loan))) < 1_000);
 });
 
+test('credit plan items for one month, a range, or all the time', () => {
+  const b: Budget = {
+    fixed: [
+      ...fixed,
+      { id: 'c1', name: 'Ăn uống', amount: 10_000_000, direction: 'out', kind: 'credit' },
+      { id: 'c2', name: 'Quà Tết', amount: 8_000_000, direction: 'out', kind: 'credit', fromMonth: '2027-01', toMonth: '2027-01' },
+      { id: 'c3', name: 'Du lịch', amount: 5_000_000, direction: 'out', kind: 'credit', fromMonth: '2027-03', toMonth: '2027-05' },
+    ],
+    oneOffs: [],
+    overrides: {},
+  };
+  const plan = (m: string) => monthFlow(b, m, { txs: [], statementDay: 14, today: '2026-12-01' });
+  assert.deepEqual([plan('2026-12').creditPlanned, plan('2026-12').creditLine?.name], [10_000_000, 'Ăn uống']);
+  assert.deepEqual([plan('2027-01').creditPlanned, plan('2027-01').creditLine?.name], [18_000_000, 'Ăn uống, Quà Tết']);
+  assert.deepEqual(['2027-02', '2027-03', '2027-05', '2027-06'].map((m) => plan(m).creditPlanned), [10_000_000, 15_000_000, 15_000_000, 10_000_000]);
+  // The long-range plan sees the months where an item starts or stops: Tết only in January, the trip March to May.
+  const inp = resolvePlan(DEFAULT_PLAN, b, [], '2026-11');
+  assert.deepEqual([inp.extraByMonth?.[3], inp.extraByMonth?.[4], inp.extraByMonth?.[5], inp.extraByMonth?.[7], inp.extraByMonth?.[8]], [-8_000_000, undefined, -5_000_000, -5_000_000, undefined]);
+});
+
 test('only bank mail that reads like a transaction is sent on to Claude', () => {
   assert.ok(looksLikeTransaction('Tài khoản của Quý khách vừa ghi nợ 1.500.000 VND, giao dịch chuyển khoản.'));
   assert.ok(!looksLikeTransaction('Ưu đãi hoàn tiền 10% khi mở thẻ mới tại HSBC!'));

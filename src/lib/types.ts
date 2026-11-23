@@ -8,8 +8,9 @@ export interface FixedItem {
    * Only for direction "out":
    * - expense: ordinary spending
    * - debt: a loan repayment (feeds the long-range plan's debts)
-   * - credit: the planned credit-card spend per statement cycle; actual card
-   *   transactions are compared against it. At most one item has this kind.
+   * - credit: a planned credit-card spend per statement cycle, named by its
+   *   note; the plan is the sum of these items, and actual card spending is
+   *   compared against it.
    */
   kind?: 'expense' | 'debt' | 'credit';
   /**
@@ -21,6 +22,13 @@ export interface FixedItem {
   onCard?: boolean;
   /** Only for direction "out": the bucket that day-to-day spending is tracked against. */
   daily?: boolean;
+  /**
+   * The months the item applies in (YYYY-MM, both included). Unset = every
+   * month. Credit-card plan items use it for "this month only" (from = to) and
+   * "from month to month".
+   */
+  fromMonth?: string;
+  toMonth?: string;
 }
 
 /** An expected one-off income or expense in one specific month. */

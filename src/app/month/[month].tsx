@@ -234,7 +234,7 @@ export default function MonthDetail() {
         defaultMonth={month}
         defaultDirection={oneOff.direction}
       />
-      <CreditPlanSheet visible={creditSetup} onClose={() => setCreditSetup(false)} />
+      <CreditPlanSheet visible={creditSetup} onClose={() => setCreditSetup(false)} month={month} />
       <LoanSheet visible={loanEdit.open} onClose={() => setLoanEdit((v) => ({ ...v, open: false }))} item={loanEdit.item} />
       <TxSheet visible={tx !== undefined} onClose={() => setTx(undefined)} tx={tx} />
     </Screen>
