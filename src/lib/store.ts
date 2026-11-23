@@ -33,7 +33,8 @@ type Phase = 'boot' | 'setup' | 'locked' | 'ready';
 interface State {
   phase: Phase;
   loaded: boolean;
-  hideAmounts: boolean;
+  /** Sections (see HideScope in components/ui) whose amounts are shown. Empty after every unlock. */
+  revealed: string[];
   ui: UiConfig;
   uiHistory: UiConfig[];
   /** Incomes and expenses that repeat every month. */
@@ -59,7 +60,7 @@ interface State {
   boot: () => Promise<void>;
   unlock: () => Promise<void>;
   lock: () => void;
-  toggleHide: () => void;
+  toggleReveal: (section: string) => void;
 
   upsertFixed: (item: Omit<FixedItem, 'id'> & { id?: string }) => FixedItem;
   deleteFixed: (id: string) => void;
@@ -117,7 +118,7 @@ export const useStore = create<State>((set, get) => ({
   phase: 'boot',
   loaded: false,
   // Every amount starts hidden; the eye button reveals them until the next lock.
-  hideAmounts: true,
+  revealed: [],
   ui: DEFAULT_UI,
   uiHistory: [],
   fixed: [],
@@ -191,7 +192,7 @@ export const useStore = create<State>((set, get) => ({
         chat: chat ?? [],
         apiHistory: apiHistory ?? [],
         txs,
-        hideAmounts: true,
+        revealed: [],
       });
       if (fixed === null || allFixed !== loadedFixed) persist('fixed', allFixed);
       if (!creditMarked) persist('creditMarked', true);
@@ -203,16 +204,19 @@ export const useStore = create<State>((set, get) => ({
       if (oneOffs === null) persist('oneOffs', get().oneOffs);
       if (seeded) persist('accounts', seeded.accounts);
     } else {
-      set({ hideAmounts: true });
+      set({ revealed: [] });
     }
     set({ phase: 'ready' });
   },
 
   lock: () => {
-    if (get().phase === 'ready') set({ phase: 'locked', hideAmounts: true });
+    if (get().phase === 'ready') set({ phase: 'locked', revealed: [] });
   },
 
-  toggleHide: () => set({ hideAmounts: !get().hideAmounts }),
+  toggleReveal: (section) => {
+    const cur = get().revealed;
+    set({ revealed: cur.includes(section) ? cur.filter((x) => x !== section) : [...cur, section] });
+  },
 
   upsertFixed: (item) => {
     const out = item.direction === 'out';

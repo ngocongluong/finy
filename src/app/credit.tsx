@@ -47,6 +47,7 @@ export default function CreditCycleScreen() {
   return (
     <Screen
       title="Thẻ tín dụng"
+      eye="credit.list"
       right={
         <>
           <IconBtn name="chevron-back" onPress={() => setMonth(shiftMonth(month, -1))} label="Kỳ trước" />
@@ -54,7 +55,7 @@ export default function CreditCycleScreen() {
           <IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />
         </>
       }>
-      <Card style={{ gap: 10 }}>
+      <Card eye={'credit.summary'} style={{ gap: 10 }}>
         <Row>
           <Txt v="heading">
             Kỳ {shortDate(cycle.start)} – {shortDate(cycle.end)}
@@ -87,7 +88,7 @@ export default function CreditCycleScreen() {
         </Pressable>
       </Card>
 
-      <Card style={{ gap: 2 }}>
+      <Card eye={'credit.instalments'} style={{ gap: 2 }}>
         <Row style={{ marginBottom: 4 }}>
           <Txt v="heading">Trả góp qua thẻ</Txt>
           <Amount value={flow.instalmentLines.reduce((s, l) => s + l.amount, 0)} color={c.muted} />
@@ -120,7 +121,7 @@ export default function CreditCycleScreen() {
       </Card>
 
       {flow.onCardLines.length ? (
-        <Card style={{ gap: 2 }}>
+        <Card eye={'credit.oncard'} style={{ gap: 2 }}>
           <Txt v="heading" style={{ marginBottom: 4 }}>Trả qua thẻ mỗi kỳ</Txt>
           {flow.onCardLines.map((l) => (
             <Row key={l.id} style={{ minHeight: 44 }}>

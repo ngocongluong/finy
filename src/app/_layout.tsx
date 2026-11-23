@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import React, { useEffect, useMemo } from 'react';
 import { Alert, AppState, Modal, View } from 'react-native';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LockScreen } from '../components/LockScreen';
 import { fmtVND } from '../lib/format';
@@ -40,6 +41,8 @@ export default function RootLayout() {
   // so card spending and the overspend warning are current without a manual sync.
   useEffect(() => {
     if (phase !== 'ready') return;
+    // Screenshot test builds (emulator) must never read the real mailbox.
+    if (Constants.expoConfig?.extra?.allowScreenshots) return;
     (async () => {
       let { settings } = useStore.getState();
       if (!settings.gmailEmail) {
@@ -75,6 +78,7 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <KeyboardProvider>
     <SafeAreaProvider>
       <StatusBar style="light" />
       <View style={{ flex: 1, backgroundColor: bg }}>
@@ -87,5 +91,6 @@ export default function RootLayout() {
         {phase === 'boot' ? <View style={{ flex: 1, backgroundColor: '#0B0D12' }} /> : <LockScreen mode={phase === 'setup' ? 'setup' : 'unlock'} />}
       </Modal>
     </SafeAreaProvider>
+    </KeyboardProvider>
   );
 }

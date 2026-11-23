@@ -261,7 +261,7 @@ export async function shouldAlertCreditOver(over: NonNullable<SyncResult['credit
 /** Text of the overspend alert. */
 export function creditOverMessage(over: NonNullable<SyncResult['creditOver']>, fmtAmount: (n: number) => string): string {
   // The alert can pop up while amounts are hidden: keep them hidden there too.
-  const fmt = (n: number) => (useStore.getState().hideAmounts ? '•••' : fmtAmount(n));
+  const fmt = (n: number) => (useStore.getState().revealed.includes('home.credit') ? fmtAmount(n) : '•••');
   const [, m, d] = over.cycleEnd.split('-').map(Number);
   return `Kỳ sao kê ${d}/${m}: đã xài ${fmt(over.spent)}, vượt ${fmt(over.spent - over.planned)} so với dự chi ${fmt(over.planned)}.`;
 }

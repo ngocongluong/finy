@@ -90,7 +90,7 @@ export default function Budget() {
             ))}
           </View>
 
-          <Card style={{ gap: 2 }}>
+          <Card eye={'budget.table'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="small" style={{ width: 66 }}>Tháng</Txt>
               <Txt v="small" style={cell}>Thu</Txt>
@@ -145,7 +145,7 @@ export default function Budget() {
 
       {view === 'fixed' ? (
         <>
-          <Card style={{ gap: 2 }}>
+          <Card eye={'budget.fixedIn'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="heading">Thu cố định hàng tháng</Txt>
               <Amount value={base.fixedIn} color={c.muted} />
@@ -157,7 +157,7 @@ export default function Budget() {
             <Btn label="Thêm nguồn thu" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'in', item: null })} />
           </Card>
 
-          <Card style={{ gap: 2 }}>
+          <Card eye={'budget.fixedOut'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="heading">Chi cố định hàng tháng</Txt>
               <Amount value={base.fixedOut} color={c.muted} />
@@ -175,7 +175,7 @@ export default function Budget() {
             <Btn label="Thêm khoản chi" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setFixedSheet({ direction: 'out', item: null })} />
           </Card>
 
-          <Card style={{ gap: 2 }}>
+          <Card eye={'budget.instalments'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="heading">Trả góp qua thẻ</Txt>
               <Amount value={instalments.reduce((s, p) => { const n = instalmentPart(p, cycleMonth); return s + (n ? instalmentAmount(p, n) : 0); }, 0)} color={c.muted} />
@@ -207,7 +207,7 @@ export default function Budget() {
             <Btn label="Thêm khoản trả góp" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setInst({ open: true, item: null })} />
           </Card>
 
-          <Card style={{ gap: 6 }}>
+          <Card eye={'budget.fixedSummary'} style={{ gap: 6 }}>
             <Txt v="label">{base.saving < 0 ? 'Mỗi tháng thiếu (chưa tính phát sinh)' : 'Mỗi tháng để dành được (chưa tính phát sinh)'}</Txt>
             <Amount v="hero" value={Math.abs(base.saving)} color={base.saving < 0 ? c.negative : c.positive} />
             <Txt v="small">= thu cố định − chi cố định. Muốn một tháng khác đi, mở tháng đó trong “Bảng thu chi” để sửa riêng hoặc thêm khoản phát sinh.</Txt>
@@ -216,7 +216,7 @@ export default function Budget() {
       ) : null}
 
       {view === 'accounts' ? (
-        <Card style={{ gap: 4 }}>
+        <Card eye={'budget.accounts'} style={{ gap: 4 }}>
           <Txt v="label">Tổng tiền hiện có</Txt>
           <Amount v="hero" value={total} color={total < 0 ? c.negative : c.text} />
           <View style={{ height: 8 }} />

@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from 'react-native';
-import { IconBtn, RichText, Screen, Txt, useUi } from '../../components/ui';
+import { ActivityIndicator, Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { IconBtn, RichText, Screen, Txt, useKeyboardSpace, useUi } from '../../components/ui';
 import { apiKey, sendToFiny } from '../../lib/claude';
 import { useStore } from '../../lib/store';
 import { maskMoney } from '../../lib/format';
@@ -20,11 +21,13 @@ export default function Chat() {
   const chat = useStore((s) => s.chat);
   const pending = useStore((s) => s.pendingPrompt);
   const canUndo = useStore((s) => s.uiHistory.length > 0);
-  const hide = useStore((s) => s.hideAmounts);
+  // Chat bubbles follow the eye in this screen's title row.
+  const hide = useStore((s) => !s.revealed.includes('chat'));
   const focused = useIsFocused();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const kb = useKeyboardSpace('chat');
 
   const send = useCallback(
     async (message: string) => {
@@ -62,6 +65,7 @@ export default function Chat() {
   return (
     <Screen
       title="Finy"
+      eye="chat"
       scroll={false}
       right={
         <>
@@ -69,7 +73,8 @@ export default function Chat() {
           <IconBtn name="create-outline" onPress={newChat} label="Cuộc trò chuyện mới" />
         </>
       }>
-      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+      {/* Keeps the input right above the keyboard. */}
+      <Animated.View ref={kb.ref} onLayout={kb.onLayout} collapsable={false} style={[{ flex: 1 }, kb.style]}>
         <ScrollView
           ref={scroll}
           onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
@@ -131,6 +136,7 @@ export default function Chat() {
             placeholder="Nhắn cho Finy…"
             placeholderTextColor={alpha(c.muted, 0.7)}
             multiline
+            onFocus={() => setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 300)}
             style={{ flex: 1, backgroundColor: c.card, color: c.text, borderRadius: Math.min(r, 22), paddingHorizontal: 16, paddingVertical: 12, fontSize: fs(16), maxHeight: 130, minHeight: 48, borderWidth: 1, borderColor: c.border }}
           />
           <Pressable
@@ -142,7 +148,7 @@ export default function Chat() {
             <Ionicons name="arrow-up" size={22} color={c.onAccent} />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </Animated.View>
     </Screen>
   );
 }

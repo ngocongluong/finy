@@ -148,7 +148,7 @@ export default function Settings() {
   const embedded = !settings.apiKeyOverride && !!apiKey();
 
   return (
-    <Screen title="Cài đặt" eye={false} right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
+    <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
       <Card style={{ gap: 14 }}>
         <Txt v="heading">Bảo mật</Txt>
         <Toggle

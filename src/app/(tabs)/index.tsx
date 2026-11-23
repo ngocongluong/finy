@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Pressable, View } from 'react-native';
 import { Sparkline } from '../../components/charts';
-import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
+import { Amount, Btn, Card, Empty, HideScope, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
 import { creditCycle, cycleMonthOf, dailyStats, monthFlow, netWorth, type MonthFlow } from '../../lib/finance';
 import { dateKey, fmtDateTime, fmtPct, fmtTime, monthKey, monthLabel } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
@@ -69,8 +69,6 @@ export default function Home() {
   const accounts = useStore((s) => s.accounts);
   const txs = useStore((s) => s.txs);
   const plan = useStore((s) => s.plan);
-  const hide = useStore((s) => s.hideAmounts);
-  const toggleHide = useStore((s) => s.toggleHide);
 
   const today = dateKey();
   const month = monthKey();
@@ -108,8 +106,8 @@ export default function Home() {
       case 'debtPayment': return money(sum.debtPayment);
       case 'creditSpent': return money(card.creditSpent);
       case 'creditPlanned': return money(card.creditPlanned);
-      case 'spendRatio': return fmtPct(sum.spendRatio);
-      case 'savingRate': return fmtPct(sum.savingRate);
+      case 'spendRatio': return secret(fmtPct(sum.spendRatio));
+      case 'savingRate': return secret(fmtPct(sum.savingRate));
       case 'netWorth': return money(total);
       case 'dailyAllowance': return money(daily.allowance);
       case 'spentToday': return money(daily.spentToday);
@@ -121,7 +119,7 @@ export default function Home() {
   const sections: Record<HomeSectionId, React.ReactNode> = {
     credit:
       card.creditLine || card.creditSpent > 0 || (closedCard && closedCard.creditSpent > 0) ? (
-        <Card key="credit" style={{ gap: 12 }}>
+        <Card eye={'home.credit'} key="credit" style={{ gap: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="card" size={18} color={c.accent} />
             <Txt v="heading">Thẻ tín dụng</Txt>
@@ -136,7 +134,7 @@ export default function Home() {
         </Card>
       ) : null,
     month: (
-      <Card key="month" style={{ gap: 10 }} onPress={() => router.push(`/month/${month}`)}>
+      <Card eye={'home.month'} key="month" style={{ gap: 10 }} onPress={() => router.push(`/month/${month}`)}>
         <Txt v="heading">{monthLabel(month)}</Txt>
         <Row><Txt v="label">Thu{sum.extraIn > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.income} /></Row>
         <Row><Txt v="label">Chi{sum.extraOut > 0 || sum.creditOver > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.expense} /></Row>
@@ -147,21 +145,21 @@ export default function Home() {
         <View style={{ gap: 6, marginTop: 4 }}>
           <Row>
             <Txt v="label">Chi/Thu</Txt>
-            <Txt v="num">{hide ? '•••' : fmtPct(sum.spendRatio)}</Txt>
+            <Txt v="num">{secret(fmtPct(sum.spendRatio))}</Txt>
           </Row>
           <Meter ratio={sum.spendRatio} color={sum.spendRatio > 1 ? c.negative : c.accent} />
         </View>
       </Card>
     ),
     networth: (
-      <Card key="networth" style={{ gap: 6 }} onPress={() => router.navigate('/budget')}>
+      <Card eye={'home.networth'} key="networth" style={{ gap: 6 }} onPress={() => router.navigate('/budget')}>
         <Txt v="label">Tổng tiền hiện có</Txt>
         <Amount v="hero" value={total} color={total < 0 ? c.negative : c.text} />
         <Txt v="small">{accounts.length ? `${accounts.length} tài khoản — chạm để cập nhật` : 'Chưa có tài khoản nào — chạm để thêm'}</Txt>
       </Card>
     ),
     budget: (
-      <Card key="budget" style={{ gap: 12 }} onPress={() => router.navigate('/budget')}>
+      <Card eye={'home.budget'} key="budget" style={{ gap: 12 }} onPress={() => router.navigate('/budget')}>
         <Txt v="heading">Khoản chi lớn nhất tháng này</Txt>
         {outs.length ? (
           outs.slice(0, 5).map((i) => (
@@ -179,7 +177,7 @@ export default function Home() {
       </Card>
     ),
     recent: (
-      <Card key="recent" style={{ gap: 10 }} onPress={() => router.navigate('/transactions')}>
+      <Card eye={'home.recent'} key="recent" style={{ gap: 10 }} onPress={() => router.navigate('/transactions')}>
         <Txt v="heading">Giao dịch gần đây</Txt>
         {txs.length ? (
           txs.slice(0, 5).map((t) => (
@@ -197,7 +195,7 @@ export default function Home() {
       </Card>
     ),
     plan: (
-      <Card key="plan" style={{ gap: 6 }} onPress={() => router.navigate('/plan')}>
+      <Card eye={'home.plan'} key="plan" style={{ gap: 6 }} onPress={() => router.navigate('/plan')}>
         <Txt v="label">Sau {lastRow.year} năm (kịch bản cơ sở)</Txt>
         <Amount v="title" value={lastRow.netWorth} color={lastRow.netWorth < 0 ? c.negative : c.text} />
         <Sparkline values={proj.rows.map((r) => r.netWorth)} />
@@ -207,7 +205,7 @@ export default function Home() {
     custom: ui.customCards.length ? (
       <React.Fragment key="custom">
         {ui.customCards.map((card) => (
-          <Card key={card.id} style={{ gap: 8 }}>
+          <Card eye={`home.custom.${card.id}`} key={card.id} style={{ gap: 8 }}>
             <Txt v="heading">{card.title}</Txt>
             {card.lines.map((l, i) =>
               l.metric ? (
@@ -239,6 +237,8 @@ export default function Home() {
         </>
       }>
       {card.creditOver > 0 ? (
+        // The warning's amounts follow the credit card section's eye.
+        <HideScope id="home.credit">
         <Pressable
           onPress={() => router.push(`/month/${cycle.month}`)}
           accessibilityRole="button"
@@ -261,6 +261,7 @@ export default function Home() {
             </Txt>
           </View>
         </Pressable>
+        </HideScope>
       ) : null}
       {visible.length ? visible : <Empty icon="grid-outline" text="Mọi khối trên trang này đang ẩn. Nhờ Finy bật lại hoặc khôi phục giao diện trong Cài đặt." />}
     </Screen>

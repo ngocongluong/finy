@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { FixedSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
-import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
+import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
 import { creditCycle, monthFlow, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
@@ -29,7 +29,6 @@ export default function MonthDetail() {
 
   const { budget, credit } = useBudget();
   const txs = useStore((s) => s.txs);
-  const hide = useStore((s) => s.hideAmounts);
   const statementDay = useStore((s) => s.settings.statementDay);
 
   const [fixedEdit, setFixedEdit] = useState<{ open: boolean; item: FixedItem | null }>({ open: false, item: null });
@@ -94,7 +93,7 @@ export default function MonthDetail() {
           <IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />
         </>
       }>
-      <Card style={{ gap: 10 }}>
+      <Card eye={'month.summary'} style={{ gap: 10 }}>
         <Row><Txt v="label">Tổng thu</Txt><Amount value={flow.income} /></Row>
         <Row><Txt v="label">Tổng chi</Txt><Amount value={flow.expense} /></Row>
         <View style={{ height: 1, backgroundColor: c.border }} />
@@ -105,14 +104,14 @@ export default function MonthDetail() {
         <View style={{ gap: 6 }}>
           <Row>
             <Txt v="label">Chi/Thu</Txt>
-            <Txt v="num">{hide ? '•••' : fmtPct(flow.spendRatio)}</Txt>
+            <Txt v="num">{secret(fmtPct(flow.spendRatio))}</Txt>
           </Row>
           <Meter ratio={flow.spendRatio} color={flow.spendRatio > 1 ? c.negative : c.accent} />
         </View>
       </Card>
 
       {/* ---- Thu ---- */}
-      <Card style={{ gap: 2 }}>
+      <Card eye={'month.in'} style={{ gap: 2 }}>
         <Row style={{ marginBottom: 6 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="arrow-down-circle" size={20} color={c.positive} />
@@ -126,7 +125,7 @@ export default function MonthDetail() {
       </Card>
 
       {/* ---- Chi ---- */}
-      <Card style={{ gap: 2 }}>
+      <Card eye={'month.out'} style={{ gap: 2 }}>
         <Row style={{ marginBottom: 6 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="arrow-up-circle" size={20} color={c.negative} />
@@ -156,7 +155,7 @@ export default function MonthDetail() {
       </Card>
 
       {/* ---- Chi tín dụng ---- */}
-      <Card style={{ gap: 10 }}>
+      <Card eye={'month.credit'} style={{ gap: 10 }}>
         <Row>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="card" size={20} color={c.accent} />

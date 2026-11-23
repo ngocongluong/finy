@@ -7,7 +7,7 @@ import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg
 import { fmtVND } from '../lib/format';
 import { useStore } from '../lib/store';
 import { CHART } from '../lib/theme';
-import { Row, Txt, useUi } from './ui';
+import { Row, Txt, useHidden, useUi } from './ui';
 
 function niceMax(v: number): number {
   if (v <= 0) return 1;
@@ -41,7 +41,7 @@ export function LineChart({
   emphasis?: string;
 }) {
   const { c, fs } = useUi();
-  const hide = useStore((s) => s.hideAmounts);
+  const hide = useHidden();
   const { w, onLayout } = useWidth();
   const n = xLabels.length;
   const [sel, setSel] = useState(n - 1);
@@ -139,7 +139,7 @@ export function SpendBars({
   height?: number;
 }) {
   const { c, fs } = useUi();
-  const hide = useStore((s) => s.hideAmounts);
+  const hide = useHidden();
   const { w, onLayout } = useWidth();
   const [sel, setSel] = useState(data.length - 1);
   const active = Math.min(sel, data.length - 1);

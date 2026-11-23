@@ -48,7 +48,7 @@ export default function Transactions() {
   };
 
   return (
-    <Screen title="Giao dịch" right={<IconBtn name="add-circle" size={28} color={c.accent} onPress={() => setEditing(null)} label="Nhập chi tiêu" />}>
+    <Screen title="Giao dịch" eye="tx.list" right={<IconBtn name="add-circle" size={28} color={c.accent} onPress={() => setEditing(null)} label="Nhập chi tiêu" />}>
       <Card style={{ gap: 10 }}>
         <Row>
           <View style={{ flex: 1, marginRight: 12 }}>

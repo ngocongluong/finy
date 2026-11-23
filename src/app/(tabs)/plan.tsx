@@ -141,7 +141,7 @@ export default function Plan() {
         ))}
       </View>
 
-      <Card style={{ gap }}>
+      <Card eye={'plan.chart'} style={{ gap }}>
         <View>
           <Txt v="label">Tài sản ròng năm {thisYear + last.year} (kịch bản cơ sở)</Txt>
           <Amount v="hero" value={pick(last)} color={pick(last) < 0 ? c.negative : c.text} />
@@ -155,7 +155,7 @@ export default function Plan() {
         <Txt v="small">Thận trọng: lãi −2, thu nhập tăng −2, lạm phát +1 điểm %. Lạc quan: lãi +2, thu nhập tăng +2 điểm %.</Txt>
       </Card>
 
-      <Card style={{ gap: 10 }}>
+      <Card eye={'plan.notes'} style={{ gap: 10 }}>
         <Txt v="heading">Điểm đáng chú ý</Txt>
         <Row>
           <Txt v="label">Để dành được mỗi tháng (hiện tại)</Txt>
@@ -193,7 +193,7 @@ export default function Plan() {
         />
       </Card>
 
-      <Card style={{ gap: 2 }}>
+      <Card eye={'plan.assumptions'} style={{ gap: 2 }}>
         <Txt v="heading" style={{ marginBottom: 6 }}>Giả định</Txt>
         {FIELDS.map((f) => {
           const auto = f.auto && plan[f.key as keyof PlanParams] === null;
@@ -211,7 +211,7 @@ export default function Plan() {
         })}
       </Card>
 
-      <Card style={{ gap: 2 }}>
+      <Card eye={'plan.debts'} style={{ gap: 2 }}>
         <Row style={{ marginBottom: 6 }}>
           <Txt v="heading">Khoản vay</Txt>
           {plan.debts !== null ? (
@@ -237,7 +237,7 @@ export default function Plan() {
         <Btn label="Thêm khoản vay" icon="add" kind="ghost" onPress={() => setDebt(null)} style={{ marginTop: 8 }} />
       </Card>
 
-      <Card style={{ gap: 2 }}>
+      <Card eye={'plan.goals'} style={{ gap: 2 }}>
         <Txt v="heading" style={{ marginBottom: 6 }}>Khoản chi lớn dự kiến</Txt>
         {plan.goals.length === 0 ? <Txt v="label">Chưa có. Thêm các khoản như mua xe, sửa nhà, học phí lớn để kế hoạch sát thực tế hơn.</Txt> : null}
         {plan.goals.map((g) => (
@@ -254,7 +254,7 @@ export default function Plan() {
         <Btn label="Thêm khoản chi lớn" icon="add" kind="ghost" onPress={() => setGoal(null)} style={{ marginTop: 8 }} />
       </Card>
 
-      <Card style={{ gap: 8 }}>
+      <Card eye={'plan.table'} style={{ gap: 8 }}>
         <Txt v="heading">Từng năm (kịch bản cơ sở)</Txt>
         <Row>
           <Txt v="small" style={{ width: 48 }}>Năm</Txt>
