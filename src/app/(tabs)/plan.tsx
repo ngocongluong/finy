@@ -5,6 +5,7 @@ import { LineChart } from '../../components/charts';
 import { NumberSheet } from '../../components/sheets';
 import { Amount, AmountField, Btn, Card, Chip, Field, Row, Screen, Segmented, Sheet, Txt, useMoney, useUi } from '../../components/ui';
 import { fmtVND, monthKey, uid } from '../../lib/format';
+import { useBudget } from '../../lib/hooks';
 import { projectAll, resolvePlan, SCENARIOS, yearReaching } from '../../lib/plan';
 import { useStore } from '../../lib/store';
 import type { PlanDebt, PlanGoal, PlanParams } from '../../lib/types';
@@ -109,8 +110,7 @@ export default function Plan() {
   const { c, gap } = useUi();
   const money = useMoney();
   const plan = useStore((s) => s.plan);
-  const fixed = useStore((s) => s.fixed);
-  const oneOffs = useStore((s) => s.oneOffs);
+  const { budget } = useBudget();
   const accounts = useStore((s) => s.accounts);
   const setPlan = useStore((s) => s.setPlan);
   const setPendingPrompt = useStore((s) => s.setPendingPrompt);
@@ -120,7 +120,7 @@ export default function Plan() {
   const [debt, setDebt] = useState<PlanDebt | null | undefined>(undefined);
   const [goal, setGoal] = useState<PlanGoal | null | undefined>(undefined);
 
-  const inputs = useMemo(() => resolvePlan(plan, fixed, oneOffs, accounts, monthKey()), [plan, fixed, oneOffs, accounts]);
+  const inputs = useMemo(() => resolvePlan(plan, budget, accounts, monthKey()), [plan, budget, accounts]);
   const all = useMemo(() => projectAll(inputs), [inputs]);
   const base = all.base;
   const last = base.rows[base.rows.length - 1];

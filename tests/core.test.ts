@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dailyStats, flowTable, migrateLegacyBudget, monthFlow, netWorth } from '../src/lib/finance';
+import { creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtVND, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
-import { htmlToText, senderAllowed } from '../src/lib/mailText';
+import { htmlToText, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
 import type { FixedItem, OneOff, Tx } from '../src/lib/types';
@@ -24,6 +24,8 @@ const oneOffs: OneOff[] = [
   { id: 'x3', month: '2027-02', name: 'Sửa xe', amount: 60_000_000, direction: 'out' },
   { id: 'x4', month: '2026-09', name: 'Đã qua', amount: 7_000_000, direction: 'out' },
 ];
+
+const B: Budget = { fixed, oneOffs, overrides: {} };
 
 test('money formatting', () => {
   assert.equal(fmtVND(20_000_000), '20.000.000 đ');
@@ -55,7 +57,7 @@ test('month helpers', () => {
 });
 
 test('a month with only fixed items: saving is income minus expenses', () => {
-  const f = monthFlow(fixed, oneOffs, '2026-11');
+  const f = monthFlow(B, '2026-11');
   assert.equal(f.income, 50_000_000);
   assert.equal(f.expense, 30_000_000);
   assert.equal(f.saving, 20_000_000);
@@ -68,20 +70,20 @@ test('a month with only fixed items: saving is income minus expenses', () => {
 });
 
 test('one-offs change only their own month', () => {
-  const jan = monthFlow(fixed, oneOffs, '2027-01');
+  const jan = monthFlow(B, '2027-01');
   assert.equal(jan.extraIn, 40_000_000);
   assert.equal(jan.extraOut, 15_000_000);
   assert.equal(jan.income, 90_000_000);
   assert.equal(jan.expense, 45_000_000);
   assert.equal(jan.saving, 45_000_000);
 
-  const feb = monthFlow(fixed, oneOffs, '2027-02');
+  const feb = monthFlow(B, '2027-02');
   assert.equal(feb.saving, 20_000_000 - 60_000_000); // a shortfall month
-  assert.equal(monthFlow(fixed, oneOffs, '2027-03').saving, 20_000_000);
+  assert.equal(monthFlow(B, '2027-03').saving, 20_000_000);
 });
 
 test('nothing entered yet: zeros, and ratios are undefined rather than wrong', () => {
-  const f = monthFlow([], [], '2026-11');
+  const f = monthFlow({ fixed: [], oneOffs: [], overrides: {} }, '2026-11');
   assert.equal(f.income, 0);
   assert.equal(f.saving, 0);
   assert.ok(Number.isNaN(f.spendRatio));
@@ -89,7 +91,7 @@ test('nothing entered yet: zeros, and ratios are undefined rather than wrong', (
 });
 
 test('the cash-flow table lists consecutive months with a running total', () => {
-  const rows = flowTable(fixed, oneOffs, '2026-11', 5);
+  const rows = flowTable(B, '2026-11', 5);
   assert.deepEqual(rows.map((r) => r.month), ['2026-11', '2026-12', '2027-01', '2027-02', '2027-03']);
   assert.deepEqual(rows.map((r) => r.saving), [20_000_000, 20_000_000, 45_000_000, -40_000_000, 20_000_000]);
   assert.deepEqual(rows.map((r) => r.cumulative), [20_000_000, 40_000_000, 85_000_000, 45_000_000, 65_000_000]);
@@ -117,8 +119,114 @@ test('old per-month budgets convert to fixed items', () => {
     ],
   );
   assert.equal(migrated[1].id, 'a'); // ids are kept
-  assert.equal(monthFlow(migrated, [], '2026-11').saving, 36_000_000);
+  assert.equal(monthFlow({ fixed: migrated, oneOffs: [], overrides: {} }, '2026-11').saving, 36_000_000);
   assert.deepEqual(migrateLegacyBudget({ month: '2026-11', income: 0, items: [] }), []);
+});
+
+test('a fixed item can have its own amount in one month without changing the others', () => {
+  const b: Budget = { ...B, oneOffs: [], overrides: { '2026-12': { i1: 60_000_000, o3: 0 } } };
+  const dec = monthFlow(b, '2026-12');
+  assert.equal(dec.fixedIn, 65_000_000); // salary 60 instead of 45, plus rent 5
+  assert.equal(dec.fixedOut, 26_000_000); // tuition skipped this month
+  assert.equal(dec.saving, 39_000_000);
+  assert.ok(dec.adjusted);
+  const salary = dec.incomeLines.find((l) => l.id === 'i1')!;
+  assert.deepEqual([salary.amount, salary.base, salary.overridden], [60_000_000, 45_000_000, true]);
+  assert.equal(dec.expenseLines.find((l) => l.id === 'o3')!.amount, 0);
+
+  const jan = monthFlow(b, '2027-01');
+  assert.equal(jan.saving, 20_000_000);
+  assert.ok(!jan.adjusted);
+  // The long-range plan sees the difference in that month only: +15 income, +4 not spent.
+  assert.deepEqual(resolvePlan(DEFAULT_PLAN, b, [], '2026-11').extraByMonth, { 2: 19_000_000 });
+});
+
+test('income and expense lines are listed separately, fixed before one-offs', () => {
+  const jan = monthFlow(B, '2027-01');
+  assert.deepEqual(jan.incomeLines.map((l) => [l.name, l.source]), [['Lương', 'fixed'], ['Cho thuê phòng', 'fixed'], ['Thưởng Tết', 'oneoff']]);
+  assert.deepEqual(jan.expenseLines.map((l) => l.name), ['Trả góp', 'Tiền nhà', 'Học phí', 'Chi tiêu hằng ngày', 'Điện nước', 'Quà Tết']);
+  assert.equal(jan.creditLine, null);
+});
+
+test('credit-card statement cycle: closes on the statement day and belongs to that month', () => {
+  assert.deepEqual(creditCycle('2026-12', 14), { month: '2026-12', start: '2026-11-15', end: '2026-12-14' });
+  assert.deepEqual(creditCycle('2027-01', 14), { month: '2027-01', start: '2026-12-15', end: '2027-01-14' });
+  assert.deepEqual(creditCycle('2027-03', 28), { month: '2027-03', start: '2027-03-01', end: '2027-03-28' }); // after a 28-day February
+  assert.equal(cycleMonthOf('2026-11-14', 14), '2026-11');
+  assert.equal(cycleMonthOf('2026-11-15', 14), '2026-12');
+  assert.equal(cycleMonthOf('2026-12-31', 14), '2027-01');
+});
+
+test('card spending is compared with the plan; only the overspend adds to expenses', () => {
+  const card = (date: string, amount: number, extra: Partial<Tx> = {}): Tx => ({
+    id: date + amount, ts: 0, date, amount, direction: 'out', note: '', source: 'hsbc', countsDaily: false, credit: true, ...extra,
+  });
+  const txs = [
+    card('2026-11-14', 9_000_000), // previous cycle
+    card('2026-11-15', 2_000_000),
+    card('2026-12-01', 5_000_000),
+    card('2026-12-14', 1_000_000),
+    card('2026-12-10', 500_000, { direction: 'in' }), // refund
+    card('2026-12-15', 7_000_000), // next cycle
+    card('2026-12-02', 3_000_000, { credit: undefined }), // not a card transaction
+  ];
+  assert.equal(creditSpent(txs, creditCycle('2026-12', 14)), 7_500_000);
+
+  const withPlan = (planned: number): Budget => ({
+    fixed: [...fixed, { id: 'cc', name: 'Thẻ tín dụng', amount: planned, direction: 'out', kind: 'credit' }],
+    oneOffs: [],
+    overrides: {},
+  });
+  const under = monthFlow(withPlan(8_000_000), '2026-12', { txs, statementDay: 14 });
+  assert.deepEqual([under.creditPlanned, under.creditSpent, under.creditOver], [8_000_000, 7_500_000, 0]);
+  assert.equal(under.expense, 30_000_000 + 8_000_000); // the plan is what is budgeted
+  assert.equal(under.creditLine?.id, 'cc');
+  assert.ok(!under.expenseLines.some((l) => l.id === 'cc')); // shown in its own section
+
+  const over = monthFlow(withPlan(6_000_000), '2026-12', { txs, statementDay: 14 });
+  assert.equal(over.creditOver, 1_500_000);
+  assert.equal(over.expense, 30_000_000 + 6_000_000 + 1_500_000);
+  assert.equal(over.saving, 50_000_000 - 37_500_000);
+
+  // Without a credit plan, card spending is reported but changes nothing.
+  const none = monthFlow(B, '2026-12', { txs, statementDay: 14 });
+  assert.deepEqual([none.creditSpent, none.creditOver, none.expense], [7_500_000, 0, 30_000_000]);
+});
+
+test('an expense named like a credit card becomes the credit plan, once and only when unambiguous', () => {
+  const list = [
+    { id: 'a', name: 'Tiền Tín dụng', amount: 5, direction: 'out' as const, kind: 'expense' as const },
+    { id: 'b', name: 'Tiền nhà', amount: 9, direction: 'out' as const, kind: 'expense' as const },
+  ];
+  assert.equal(markCreditItem(list).find((f) => f.id === 'a')!.kind, 'credit');
+  assert.equal(markCreditItem(list).find((f) => f.id === 'b')!.kind, 'expense');
+  const two = [...list, { id: 'c', name: 'Credit card 2', amount: 1, direction: 'out' as const, kind: 'expense' as const }];
+  assert.deepEqual(markCreditItem(two), two);
+  const already = [{ ...list[0], kind: 'expense' as const }, { id: 'd', name: 'Thẻ', amount: 1, direction: 'out' as const, kind: 'credit' as const }];
+  assert.deepEqual(markCreditItem(already), already);
+});
+
+test('the HSBC card-transaction email is read without a model', () => {
+  const body = `\tKính gởi Quý khách,
+
+Chúng tôi xin thông báo thẻ tín dụng X1234 của Quý khách vừa thực hiện giao dịch với số tiền 185,000 VND tại HIGHLANDS COFFEE Q1 vào ngày 5/12/2026.
+
+Dư nợ hiện tại là 12,345,678 VND và số dư khả dụng là 87,654,322 VND
+
+Nếu Quý khách cần thêm thông tin, vui lòng liên hệ Trung Tâm Dịch Vụ Khách Hàng`;
+  assert.deepEqual(parseHsbcCardEmail(body), {
+    last4: '1234', amount: 185_000, currency: 'VND', merchant: 'HIGHLANDS COFFEE Q1', date: '2026-12-05', balance: 12_345_678, available: 87_654_322,
+  });
+  // Line breaks in odd places (HTML-to-text) and a missing balance sentence.
+  const wrapped = 'thẻ tín dụng X9876 của Quý khách\nvừa thực hiện giao dịch với số tiền\n1,250,000 VND tại SHOP A.B vào ngày 20/11/2026.';
+  assert.deepEqual(parseHsbcCardEmail(wrapped), {
+    last4: '9876', amount: 1_250_000, currency: 'VND', merchant: 'SHOP A.B', date: '2026-11-20', balance: null, available: null,
+  });
+  // A foreign-currency amount keeps its decimals and its currency so the caller can set it aside.
+  const usd = parseHsbcCardEmail('thẻ tín dụng X1234 của Quý khách vừa thực hiện giao dịch với số tiền 12.50 USD tại APP STORE vào ngày 1/1/2027.');
+  assert.deepEqual([usd?.amount, usd?.currency], [12.5, 'USD']);
+  assert.equal(parseHsbcCardEmail('Sao kê thẻ tín dụng tháng 11 của Quý khách đã sẵn sàng.'), null);
+  assert.equal(parseHsbcCardEmail('thẻ tín dụng X1 của Quý khách vừa thực hiện giao dịch với số tiền 10 VND tại A vào ngày 40/13/2026.'), null);
 });
 
 test('net worth subtracts debts', () => {
@@ -199,16 +307,16 @@ test('projection applies one-off cash flows in their month', () => {
 });
 
 test('plan defaults follow the fixed items, one-offs and accounts', () => {
-  const inp = resolvePlan(DEFAULT_PLAN, fixed, oneOffs, [{ id: '1', name: 'A', kind: 'saving', balance: 500 }], '2026-11');
+  const inp = resolvePlan(DEFAULT_PLAN, B, [{ id: '1', name: 'A', kind: 'saving', balance: 500 }], '2026-11');
   assert.equal(inp.monthlyIncome, 50_000_000);
   assert.equal(inp.monthlyExpense, 25_000_000); // loan repayments are modelled as debts, not expenses
   assert.equal(inp.startNetWorth, 500);
   assert.deepEqual(inp.debts.map((d) => [d.name, d.monthlyPayment, d.balance]), [['Trả góp', 5_000_000, null]]);
   // Month 1 is 2026-11, so January 2027 is month 3 and February is month 4; the past one-off is ignored.
   assert.deepEqual(inp.extraByMonth, { 3: 25_000_000, 4: -60_000_000 });
-  assert.equal(resolvePlan({ ...DEFAULT_PLAN, years: 99 }, fixed, [], [], '2026-11').years, 10);
+  assert.equal(resolvePlan({ ...DEFAULT_PLAN, years: 99 }, { ...B, oneOffs: [] }, [], '2026-11').years, 10);
   // A manual override wins over the fixed items.
-  assert.equal(resolvePlan({ ...DEFAULT_PLAN, monthlyIncome: 1 }, fixed, [], [], '2026-11').monthlyIncome, 1);
+  assert.equal(resolvePlan({ ...DEFAULT_PLAN, monthlyIncome: 1 }, { ...B, oneOffs: [] }, [], '2026-11').monthlyIncome, 1);
 });
 
 test('UI patches: valid changes apply, unreadable or malformed ones are rejected', () => {
@@ -231,6 +339,14 @@ test('UI patches: valid changes apply, unreadable or malformed ones are rejected
   assert.ok('errors' in malformed);
   const unknown = applyUiPatch(DEFAULT_UI, { home: [{ id: 'nope' as never, visible: true }] });
   assert.ok('errors' in unknown);
+});
+
+test('a layout saved before a section existed gets the new section where the default has it', () => {
+  const old = { ...DEFAULT_UI, home: [{ id: 'plan' as const, visible: true }, { id: 'today' as const, visible: false }, { id: 'month' as const, visible: true }] };
+  const home = normalizeUi(old).home.map((h) => h.id);
+  assert.deepEqual(home.slice(0, 4), ['plan', 'today', 'credit', 'month']); // credit right after today, saved order kept
+  assert.equal(home.length, DEFAULT_UI.home.length);
+  assert.equal(normalizeUi(old).home.find((h) => h.id === 'today')!.visible, false);
 });
 
 test('a saved custom card that uses a metric which no longer exists keeps its text', () => {

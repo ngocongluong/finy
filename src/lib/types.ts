@@ -4,8 +4,14 @@ export interface FixedItem {
   name: string;
   amount: number;
   direction: 'in' | 'out';
-  /** Only for direction "out": a loan repayment (feeds the long-range plan's debts) or ordinary spending. */
-  kind?: 'expense' | 'debt';
+  /**
+   * Only for direction "out":
+   * - expense: ordinary spending
+   * - debt: a loan repayment (feeds the long-range plan's debts)
+   * - credit: the planned credit-card spend per statement cycle; actual card
+   *   transactions are compared against it. At most one item has this kind.
+   */
+  kind?: 'expense' | 'debt' | 'credit';
   /** Only for direction "out": the bucket that day-to-day spending is tracked against. */
   daily?: boolean;
 }
@@ -17,6 +23,23 @@ export interface OneOff {
   name: string;
   amount: number;
   direction: 'in' | 'out';
+}
+
+/**
+ * Per-month adjustments of fixed items: overrides[month][fixedItemId] is the
+ * amount to use in that month instead of the item's usual amount (0 = skipped).
+ */
+export type Overrides = Record<string, Record<string, number>>;
+
+/** What the bank's latest card email says about the credit card. */
+export interface CreditCardInfo {
+  last4: string;
+  /** Outstanding balance ("dư nợ hiện tại"). */
+  balance: number;
+  /** Available credit ("số dư khả dụng"). */
+  available: number;
+  /** When the bank reported it. */
+  asOf: number;
 }
 
 // Legacy per-month budget (app versions before the fixed / one-off model). Only read for migration.
@@ -59,6 +82,8 @@ export interface Tx {
   countsDaily: boolean;
   /** Gmail message id for imported transactions (dedupe key). */
   extId?: string;
+  /** Paid with the credit card: counted in the statement cycle it falls in. */
+  credit?: boolean;
 }
 
 export interface PlanDebt {
@@ -94,7 +119,7 @@ export interface PlanParams {
   goals: PlanGoal[];
 }
 
-export type HomeSectionId = 'today' | 'month' | 'networth' | 'budget' | 'recent' | 'plan' | 'custom';
+export type HomeSectionId = 'today' | 'credit' | 'month' | 'networth' | 'budget' | 'recent' | 'plan' | 'custom';
 
 export type MetricKey =
   | 'income'
@@ -103,6 +128,8 @@ export type MetricKey =
   | 'extraIncome'
   | 'extraExpense'
   | 'debtPayment'
+  | 'creditSpent'
+  | 'creditPlanned'
   | 'spendRatio'
   | 'savingRate'
   | 'netWorth'
@@ -154,6 +181,8 @@ export interface ChatMsg {
 export interface AppSettings {
   autoLockSec: number;
   hideAmountsOnOpen: boolean;
+  /** Day of the month the credit-card statement closes (1-28). */
+  statementDay: number;
   gmailQuery: string;
   gmailEmail: string | null;
   lastSyncTs: number | null;

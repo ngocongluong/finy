@@ -3,16 +3,17 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
-import { migrateLegacyBudget } from './finance';
+import { markCreditItem, migrateLegacyBudget } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, ChatMsg, FixedItem, MonthBudget, OneOff, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, ChatMsg, CreditCardInfo, FixedItem, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoLockSec: 0,
   hideAmountsOnOpen: false,
+  statementDay: 14,
   gmailQuery: 'from:(hsbc.com.vn OR hsbc.com) newer_than:45d',
   gmailEmail: null,
   lastSyncTs: null,
@@ -31,6 +32,10 @@ interface State {
   fixed: FixedItem[];
   /** Expected one-off incomes and expenses, each tied to a month. */
   oneOffs: OneOff[];
+  /** Per-month adjustments of fixed items. */
+  overrides: Overrides;
+  /** Latest balance the bank reported for the credit card. */
+  creditCard: CreditCardInfo | null;
   accounts: Account[];
   txs: Tx[];
   plan: PlanParams;
@@ -48,6 +53,9 @@ interface State {
 
   upsertFixed: (item: Omit<FixedItem, 'id'> & { id?: string }) => FixedItem;
   deleteFixed: (id: string) => void;
+  /** Sets a fixed item's amount for one month only; null removes the adjustment. */
+  setOverride: (month: string, fixedId: string, amount: number | null) => void;
+  setCreditCard: (info: CreditCardInfo) => void;
   /** Adds the same one-off to each of the given months. */
   addOneOffs: (months: string[], item: Omit<OneOff, 'id' | 'month'>) => OneOff[];
   updateOneOff: (item: OneOff) => void;
@@ -101,6 +109,8 @@ export const useStore = create<State>((set, get) => ({
   uiHistory: [],
   fixed: [],
   oneOffs: [],
+  overrides: {},
+  creditCard: null,
   accounts: [],
   txs: [],
   plan: DEFAULT_PLAN,
@@ -116,10 +126,13 @@ export const useStore = create<State>((set, get) => ({
   unlock: async () => {
     if (!get().loaded) {
       await db.openDb(await getDbKey());
-      const [ui, fixed, oneOffs, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, creditCard, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
+        db.kvGet<Overrides>('overrides'),
+        db.kvGet<CreditCardInfo>('creditCard'),
+        db.kvGet<boolean>('creditMarked'),
         db.kvGet<Record<string, MonthBudget>>('budgets'),
         db.kvGet<Account[]>('accounts'),
         db.kvGet<PlanParams>('plan'),
@@ -134,11 +147,16 @@ export const useStore = create<State>((set, get) => ({
       const seeded = firstRun ? seedData() : null;
       const migrated = fixed === null && legacyBudgets !== null ? fromLegacyBudgets(legacyBudgets) : null;
       const mergedSettings = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
+      // Once: the planned card spend used to be an ordinary expense.
+      const loadedFixed = fixed ?? migrated ?? seeded?.fixed ?? [];
+      const allFixed = creditMarked ? loadedFixed : markCreditItem(loadedFixed);
       set({
         loaded: true,
         ui: normalizeUi(ui),
-        fixed: fixed ?? migrated ?? seeded?.fixed ?? [],
+        fixed: allFixed,
         oneOffs: oneOffs ?? seeded?.oneOffs ?? [],
+        overrides: overrides ?? {},
+        creditCard: creditCard ?? null,
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
         settings: mergedSettings,
@@ -147,7 +165,8 @@ export const useStore = create<State>((set, get) => ({
         txs,
         hideAmounts: mergedSettings.hideAmountsOnOpen,
       });
-      if (fixed === null) persist('fixed', get().fixed);
+      if (fixed === null || allFixed !== loadedFixed) persist('fixed', allFixed);
+      if (!creditMarked) persist('creditMarked', true);
       if (oneOffs === null) persist('oneOffs', get().oneOffs);
       if (seeded) persist('accounts', seeded.accounts);
     } else if (get().settings.hideAmountsOnOpen) {
@@ -170,12 +189,13 @@ export const useStore = create<State>((set, get) => ({
       amount: Math.max(0, Math.round(item.amount)),
       direction: item.direction,
       kind: out ? (item.kind ?? 'expense') : undefined,
-      daily: out && item.daily ? true : undefined,
+      daily: out && item.daily && item.kind !== 'credit' && item.kind !== 'debt' ? true : undefined,
     };
     const cur = get().fixed;
     let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];
-    // Only one expense can be the daily-spending bucket.
+    // Only one expense can be the daily-spending bucket, and only one the credit-card plan.
     if (full.daily) fixed = fixed.map((f) => (f.id === full.id ? f : { ...f, daily: undefined }));
+    if (full.kind === 'credit') fixed = fixed.map((f) => (f.id === full.id || f.kind !== 'credit' ? f : { ...f, kind: 'expense' }));
     set({ fixed });
     persist('fixed', fixed);
     return full;
@@ -183,8 +203,33 @@ export const useStore = create<State>((set, get) => ({
 
   deleteFixed: (id) => {
     const fixed = get().fixed.filter((f) => f.id !== id);
-    set({ fixed });
+    const overrides: Overrides = {};
+    for (const [month, byId] of Object.entries(get().overrides)) {
+      const rest = Object.fromEntries(Object.entries(byId).filter(([fid]) => fid !== id));
+      if (Object.keys(rest).length) overrides[month] = rest;
+    }
+    set({ fixed, overrides });
     persist('fixed', fixed);
+    persist('overrides', overrides);
+  },
+
+  setOverride: (month, fixedId, amount) => {
+    const item = get().fixed.find((f) => f.id === fixedId);
+    if (!item) return;
+    const overrides: Overrides = { ...get().overrides };
+    const byId = { ...(overrides[month] ?? {}) };
+    // An adjustment equal to the usual amount is no adjustment.
+    if (amount === null || Math.round(amount) === item.amount) delete byId[fixedId];
+    else byId[fixedId] = Math.max(0, Math.round(amount));
+    if (Object.keys(byId).length) overrides[month] = byId;
+    else delete overrides[month];
+    set({ overrides });
+    persist('overrides', overrides);
+  },
+
+  setCreditCard: (info) => {
+    set({ creditCard: info });
+    persist('creditCard', info);
   },
 
   addOneOffs: (months, item) => {
@@ -317,6 +362,8 @@ export const useStore = create<State>((set, get) => ({
       uiHistory: [],
       fixed: [],
       oneOffs: [],
+      overrides: {},
+      creditCard: null,
       accounts: [],
       txs: [],
       plan: DEFAULT_PLAN,
@@ -327,6 +374,7 @@ export const useStore = create<State>((set, get) => ({
     // Written explicitly so the next launch does not treat this as a first run and re-seed.
     persist('fixed', []);
     persist('oneOffs', []);
+    persist('creditMarked', true);
     persist('accounts', []);
   },
 }));

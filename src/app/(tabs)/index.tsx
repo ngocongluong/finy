@@ -1,22 +1,25 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { SpendBars, Sparkline } from '../../components/charts';
 import { TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
-import { dailySeries, dailyStats, monthFlow, netWorth } from '../../lib/finance';
-import { dateKey, fmtPct, monthKey, monthLabel } from '../../lib/format';
+import { creditCycle, cycleMonthOf, dailySeries, dailyStats, monthFlow, netWorth } from '../../lib/finance';
+import { dateKey, fmtDateTime, fmtPct, monthKey, monthLabel } from '../../lib/format';
+import { useBudget } from '../../lib/hooks';
 import { project, resolvePlan } from '../../lib/plan';
 import { useStore } from '../../lib/store';
-import { CHART, METRIC_LABELS } from '../../lib/theme';
+import { alpha, CHART, METRIC_LABELS } from '../../lib/theme';
 import type { HomeSectionId, MetricKey } from '../../lib/types';
 
 export default function Home() {
   const { c, gap } = useUi();
   const money = useMoney();
   const ui = useStore((s) => s.ui);
-  const fixed = useStore((s) => s.fixed);
-  const oneOffs = useStore((s) => s.oneOffs);
+  const { budget, credit } = useBudget();
+  const statementDay = useStore((s) => s.settings.statementDay);
+  const creditCard = useStore((s) => s.creditCard);
   const accounts = useStore((s) => s.accounts);
   const txs = useStore((s) => s.txs);
   const plan = useStore((s) => s.plan);
@@ -26,19 +29,23 @@ export default function Home() {
 
   const today = dateKey();
   const month = monthKey();
-  const sum = useMemo(() => monthFlow(fixed, oneOffs, month), [fixed, oneOffs, month]);
+  const sum = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
+  // The statement cycle open today (it may close next month), compared with the plan.
+  const cycle = useMemo(() => creditCycle(cycleMonthOf(today, statementDay), statementDay), [today, statementDay]);
+  const card = useMemo(() => monthFlow(budget, cycle.month, credit), [budget, credit, cycle.month]);
+  const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
   const daily = useMemo(() => dailyStats(sum.dailyBucket, txs, today), [sum.dailyBucket, txs, today]);
-  // This month's expenses, largest first: fixed ones plus this month's one-offs.
+  // This month's expenses, largest first, at the amounts that apply this month.
   const outs = useMemo(
     () =>
-      [...fixed.filter((f) => f.direction === 'out'), ...oneOffs.filter((o) => o.month === month && o.direction === 'out')]
+      [...sum.expenseLines, ...(sum.creditLine ? [sum.creditLine] : [])]
         .filter((i) => i.amount > 0)
         .sort((a, b) => b.amount - a.amount),
-    [fixed, oneOffs, month],
+    [sum],
   );
   const series = useMemo(() => dailySeries(txs, today, 14), [txs, today]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
-  const proj = useMemo(() => project(resolvePlan(plan, fixed, oneOffs, accounts, month)), [plan, fixed, oneOffs, accounts, month]);
+  const proj = useMemo(() => project(resolvePlan(plan, budget, accounts, month)), [plan, budget, accounts, month]);
   const lastRow = proj.rows[proj.rows.length - 1];
 
   const metric = (k: MetricKey): string => {
@@ -49,6 +56,8 @@ export default function Home() {
       case 'extraIncome': return money(sum.extraIn);
       case 'extraExpense': return money(sum.extraOut);
       case 'debtPayment': return money(sum.debtPayment);
+      case 'creditSpent': return money(card.creditSpent);
+      case 'creditPlanned': return money(card.creditPlanned);
       case 'spendRatio': return fmtPct(sum.spendRatio);
       case 'savingRate': return fmtPct(sum.savingRate);
       case 'netWorth': return money(total);
@@ -92,11 +101,45 @@ export default function Home() {
         ) : null}
       </Card>
     ),
+    credit:
+      card.creditLine || card.creditSpent > 0 ? (
+        <Card key="credit" style={{ gap: 10 }} onPress={() => router.push(`/month/${cycle.month}`)}>
+          <Row>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="card" size={18} color={c.accent} />
+              <Txt v="heading">Thẻ tín dụng</Txt>
+            </View>
+            <Txt v="small">kỳ {shortDate(cycle.start)} – {shortDate(cycle.end)}</Txt>
+          </Row>
+          <Row>
+            <Txt v="label">Đã xài kỳ này</Txt>
+            <Amount v="title" value={card.creditSpent} color={card.creditOver > 0 ? c.negative : c.text} />
+          </Row>
+          {card.creditLine ? (
+            <>
+              <Meter ratio={card.creditPlanned > 0 ? card.creditSpent / card.creditPlanned : card.creditSpent > 0 ? 1 : 0} color={card.creditOver > 0 ? c.negative : c.accent} />
+              <Row>
+                <Txt v="small">Dự chi {money(card.creditPlanned)}</Txt>
+                <Txt v="small" color={card.creditOver > 0 ? c.negative : c.muted}>
+                  {card.creditOver > 0 ? `Vượt ${money(card.creditOver)}` : `Còn ${money(card.creditPlanned - card.creditSpent)}`}
+                </Txt>
+              </Row>
+            </>
+          ) : (
+            <Txt v="small">Chưa đặt dự chi tín dụng — chạm để đặt.</Txt>
+          )}
+          {creditCard ? (
+            <Txt v="small">
+              Dư nợ {money(creditCard.balance)} · còn khả dụng {money(creditCard.available)} (HSBC báo lúc {fmtDateTime(creditCard.asOf)})
+            </Txt>
+          ) : null}
+        </Card>
+      ) : null,
     month: (
-      <Card key="month" style={{ gap: 10 }} onPress={() => router.navigate('/budget')}>
+      <Card key="month" style={{ gap: 10 }} onPress={() => router.push(`/month/${month}`)}>
         <Txt v="heading">{monthLabel(month)}</Txt>
         <Row><Txt v="label">Thu{sum.extraIn > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.income} /></Row>
-        <Row><Txt v="label">Chi{sum.extraOut > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.expense} /></Row>
+        <Row><Txt v="label">Chi{sum.extraOut > 0 || sum.creditOver > 0 ? ' (gồm phát sinh)' : ''}</Txt><Amount value={sum.expense} /></Row>
         <Row>
           <Txt v="label">{sum.saving < 0 ? 'Thiếu hụt' : 'Để dành được'}</Txt>
           <Amount value={Math.abs(sum.saving)} color={sum.saving < 0 ? c.negative : c.positive} />
@@ -196,6 +239,30 @@ export default function Home() {
           <IconBtn name="settings-outline" onPress={() => router.push('/settings')} label="Cài đặt" />
         </>
       }>
+      {card.creditOver > 0 ? (
+        <Pressable
+          onPress={() => router.push(`/month/${cycle.month}`)}
+          accessibilityRole="button"
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            gap: 10,
+            alignItems: 'flex-start',
+            backgroundColor: alpha(c.negative, 0.14),
+            borderColor: c.negative,
+            borderWidth: 1,
+            borderRadius: 14,
+            padding: 12,
+            opacity: pressed ? 0.8 : 1,
+          })}>
+          <Ionicons name="warning" size={20} color={c.negative} />
+          <View style={{ flex: 1 }}>
+            <Txt v="heading">Chi tín dụng vượt dự chi</Txt>
+            <Txt v="label" color={c.text}>
+              Kỳ sao kê {shortDate(cycle.end)}: đã xài {money(card.creditSpent)}, vượt {money(card.creditOver)} so với dự chi {money(card.creditPlanned)}.
+            </Txt>
+          </View>
+        </Pressable>
+      ) : null}
       {visible.length ? visible : <Empty icon="grid-outline" text="Mọi khối trên trang này đang ẩn. Nhờ Finy bật lại hoặc khôi phục giao diện trong Cài đặt." />}
       <TxSheet visible={addOpen} onClose={() => setAddOpen(false)} />
     </Screen>

@@ -33,6 +33,11 @@ export async function openDb(keyHex: string): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS tx_date ON tx(date);
   `);
+  // Added later: marks credit-card transactions.
+  const columns = await d.getAllAsync<{ name: string }>('PRAGMA table_info(tx)');
+  if (!columns.some((c) => c.name === 'credit')) {
+    await d.execAsync('ALTER TABLE tx ADD COLUMN credit INTEGER NOT NULL DEFAULT 0;');
+  }
   db = d;
 }
 
@@ -69,6 +74,7 @@ interface TxRow {
   source: string;
   counts_daily: number;
   ext_id: string | null;
+  credit: number;
 }
 
 const fromRow = (r: TxRow): Tx => ({
@@ -81,6 +87,7 @@ const fromRow = (r: TxRow): Tx => ({
   source: r.source === 'hsbc' ? 'hsbc' : 'manual',
   countsDaily: r.counts_daily === 1,
   extId: r.ext_id ?? undefined,
+  credit: r.credit === 1 || undefined,
 });
 
 export async function txAll(): Promise<Tx[]> {
@@ -91,16 +98,16 @@ export async function txAll(): Promise<Tx[]> {
 /** Inserts a transaction. Returns false when an imported one already exists (same ext_id). */
 export async function txInsert(t: Tx): Promise<boolean> {
   const res = await conn().runAsync(
-    'INSERT OR IGNORE INTO tx (id, ts, date, amount, direction, note, source, counts_daily, ext_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [t.id, t.ts, t.date, Math.round(t.amount), t.direction, t.note, t.source, t.countsDaily ? 1 : 0, t.extId ?? null],
+    'INSERT OR IGNORE INTO tx (id, ts, date, amount, direction, note, source, counts_daily, ext_id, credit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [t.id, t.ts, t.date, Math.round(t.amount), t.direction, t.note, t.source, t.countsDaily ? 1 : 0, t.extId ?? null, t.credit ? 1 : 0],
   );
   return res.changes > 0;
 }
 
 export async function txUpdate(t: Tx): Promise<void> {
   await conn().runAsync(
-    'UPDATE tx SET ts = ?, date = ?, amount = ?, direction = ?, note = ?, counts_daily = ? WHERE id = ?',
-    [t.ts, t.date, Math.round(t.amount), t.direction, t.note, t.countsDaily ? 1 : 0, t.id],
+    'UPDATE tx SET ts = ?, date = ?, amount = ?, direction = ?, note = ?, counts_daily = ?, credit = ? WHERE id = ?',
+    [t.ts, t.date, Math.round(t.amount), t.direction, t.note, t.countsDaily ? 1 : 0, t.credit ? 1 : 0, t.id],
   );
 }
 

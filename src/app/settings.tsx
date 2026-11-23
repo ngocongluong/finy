@@ -1,10 +1,12 @@
-import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, TextInput, View } from 'react-native';
-import { Toggle } from '../components/sheets';
+import { NumberSheet, Toggle } from '../components/sheets';
 import { Btn, Card, Chip, Field, IconBtn, Row, Screen, Segmented, Sheet, Txt, useUi } from '../components/ui';
 import { apiKey, testKey } from '../lib/claude';
+import { fmtVND } from '../lib/format';
 import * as gmail from '../lib/gmail';
+import { creditOverMessage, shouldAlertCreditOver, syncHsbc } from '../lib/hsbc';
 import { withoutAutoLock } from '../lib/lockGuard';
 import { biometricAvailable, getBiometricPref, PIN_LENGTH, setBiometricPref, setPin, verifyPin } from '../lib/security';
 import { useStore } from '../lib/store';
@@ -50,6 +52,8 @@ export default function Settings() {
   const [pinMsg, setPinMsg] = useState<string | null>(null);
   const [gmailBusy, setGmailBusy] = useState(false);
   const [gmailMsg, setGmailMsg] = useState<string | null>(null);
+  const [gmailError, setGmailError] = useState(true);
+  const [dayOpen, setDayOpen] = useState(false);
   const [query, setQuery] = useState(settings.gmailQuery);
   const [keyText, setKeyText] = useState('');
   const [keyMsg, setKeyMsg] = useState<string | null>(null);
@@ -83,17 +87,36 @@ export default function Settings() {
     try {
       const email = await withoutAutoLock(() => gmail.connect());
       setSettings({ gmailEmail: email });
+      // Bring the transactions in straight away.
+      setGmailMsg('Đã kết nối. Đang lấy giao dịch HSBC…');
+      const r = await syncHsbc();
+      setGmailMsg(r.scanned === 0 ? 'Đã kết nối. Chưa thấy email HSBC nào khớp bộ lọc.' : `Đã kết nối và thêm ${r.imported} giao dịch từ ${r.scanned} email HSBC.`);
+      setGmailError(false);
+      if (r.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
+      setGmailError(true);
       setGmailMsg(
         /DEVELOPER_ERROR|10:/.test(m)
-          ? 'Google từ chối app này (DEVELOPER_ERROR). Cần đăng ký package com.finy.app và chữ ký SHA-1 của APK trong Google Cloud — xem README, mục Gmail.'
+          ? 'Google chưa nhận app này (DEVELOPER_ERROR): project Google của Finy chưa có OAuth client cho com.finy.app. Bật đăng nhập Google trong Firebase Console của project rồi thử lại — xem README, mục Gmail.'
           : m,
       );
     } finally {
       setGmailBusy(false);
     }
   };
+
+  // Opened through finy://settings?gmail=connect : start the Google sign-in as soon as the app is unlocked.
+  const params = useLocalSearchParams<{ gmail?: string }>();
+  const phase = useStore((s) => s.phase);
+  const autoConnect = useRef(false);
+  useEffect(() => {
+    if (params.gmail !== 'connect' || phase !== 'ready' || autoConnect.current) return;
+    autoConnect.current = true;
+    if (!useStore.getState().settings.gmailEmail) connectGmail();
+    // connectGmail is recreated every render; this must run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.gmail, phase]);
 
   const disconnectGmail = async () => {
     setGmailBusy(true);
@@ -123,7 +146,7 @@ export default function Settings() {
   const embedded = !settings.apiKeyOverride && !!apiKey();
 
   return (
-    <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => router.back()} label="Đóng" />}>
+    <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
       <Card style={{ gap: 14 }}>
         <Txt v="heading">Bảo mật</Txt>
         <Toggle
@@ -163,10 +186,17 @@ export default function Settings() {
         ) : (
           <Btn label="Kết nối Gmail" icon="mail-outline" onPress={connectGmail} disabled={gmailBusy} />
         )}
-        {gmailMsg ? <Txt v="small" color={c.negative}>{gmailMsg}</Txt> : null}
+        {gmailMsg ? <Txt v="small" color={gmailError ? c.negative : c.muted}>{gmailMsg}</Txt> : null}
+        <Row>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Txt>Ngày sao kê thẻ tín dụng</Txt>
+            <Txt v="small">Kỳ tín dụng chốt vào ngày này mỗi tháng.</Txt>
+          </View>
+          <Btn label={`Ngày ${settings.statementDay}`} kind="ghost" style={{ minHeight: 42 }} onPress={() => setDayOpen(true)} />
+        </Row>
         <Field label="Bộ lọc tìm email (cú pháp tìm kiếm của Gmail)" value={query} onChangeText={setQuery} />
         {query.trim() !== settings.gmailQuery ? <Btn label="Lưu bộ lọc" kind="ghost" onPress={() => setSettings({ gmailQuery: query.trim() })} disabled={!query.trim()} /> : null}
-        <Txt v="small">Chỉ email gửi từ hsbc.com.vn hoặc hsbc.com mới được đọc. Nội dung các email đó được gửi tới Claude để tách ra số tiền và nơi giao dịch.</Txt>
+        <Txt v="small">Chỉ email gửi từ hsbc.com.vn hoặc hsbc.com mới được đọc. Email báo giao dịch thẻ tín dụng được đọc ngay trên máy; chỉ email HSBC có định dạng khác mới được gửi tới Claude để tách số tiền và nơi giao dịch.</Txt>
       </Card>
 
       <Card style={{ gap: 12 }}>
@@ -218,6 +248,19 @@ export default function Settings() {
         <Btn label="Xoá toàn bộ dữ liệu" kind="danger" icon="trash-outline" onPress={wipe} />
       </Card>
 
+      <NumberSheet
+        visible={dayOpen}
+        onClose={() => setDayOpen(false)}
+        title="Ngày sao kê thẻ tín dụng"
+        label="Ngày trong tháng (1–28)"
+        hint="Ví dụ 14: kỳ sao kê tháng 12 gồm các giao dịch từ 15/11 đến 14/12."
+        money={false}
+        value={settings.statementDay}
+        onSave={(n) => {
+          if (n !== null && n >= 1 && n <= 28) setSettings({ statementDay: Math.round(n) });
+          else Alert.alert('Ngày không hợp lệ', 'Nhập một ngày từ 1 đến 28.');
+        }}
+      />
       <Sheet
         visible={pinOpen}
         onClose={() => setPinOpen(false)}

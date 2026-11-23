@@ -9,17 +9,18 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 | Tab | Làm được gì |
 |---|---|
 | **Tổng quan** | Hôm nay còn tiêu được bao nhiêu, chi tiêu 14 ngày, tóm tắt tháng (Thu, Chi, Để dành được, Chi/Thu), tổng tiền hiện có, dự phóng dài hạn. Nút con mắt để ẩn mọi số tiền. |
-| **Ngân sách** | Nhập nguồn thu cố định và khoản chi cố định hàng tháng, thêm các khoản thu / chi phát sinh cho những tháng tự chọn; Finy lập bảng thu / chi / để dành cho 6, 12 hoặc 24 tháng tới. Kèm danh sách tài khoản tạo nên tổng tiền hiện có. |
-| **Giao dịch** | Nhập chi tiêu hằng ngày; đồng bộ giao dịch HSBC từ Gmail. |
+| **Ngân sách** | Nhập nguồn thu cố định và khoản chi cố định hàng tháng; Finy lập bảng thu / chi / để dành cho 6, 12 hoặc 24 tháng tới. Chạm một tháng để mở chi tiết: mục **Thu** và mục **Chi** tách riêng, sửa được từng dòng cho riêng tháng đó, thêm khoản phát sinh, và phần **Chi tín dụng** của kỳ sao kê. Kèm danh sách tài khoản tạo nên tổng tiền hiện có. |
+| **Giao dịch** | Nhập chi tiêu hằng ngày; đồng bộ giao dịch thẻ tín dụng HSBC từ Gmail (tự chạy mỗi lần mở app). |
 | **Kế hoạch** | Dự phóng tài sản ròng 5–10 năm theo 3 kịch bản, khoản vay, các khoản chi lớn, bảng từng năm. |
-| **Finy** | Trò chuyện với Claude: tư vấn dựa trên số liệu thật, ghi chép giúp, và đổi giao diện theo góp ý ("đổi sang tông xanh lá", "ẩn khối kế hoạch", "thêm thẻ tỷ lệ để dành"…). |
+| **Finy** | Trò chuyện với Claude: tư vấn dựa trên số liệu thật và sửa mọi con số trong app theo lời bạn ("tháng 12 lương 60 triệu", "thêm học phí 30 triệu vào tháng 1 và 6", "dự chi tín dụng còn 30 triệu", "sửa giao dịch cà phê thành 80k"), kể cả giao diện ("đổi sang tông xanh lá", "ẩn khối kế hoạch"). |
 
 ### Cách tính
 
 - **Thu của một tháng** = tổng thu cố định + thu phát sinh của tháng đó. **Chi** = tổng chi cố định (gồm trả nợ) + chi phát sinh của tháng đó.
 - **Để dành được** = thu − chi. Bạn không nhập số để dành; Finy tính ra. Số âm nghĩa là tháng đó thiếu hụt.
 - **Chi/Thu** = chi / thu của tháng.
-- Khoản lặp lại mọi tháng là **cố định**; khoản chỉ có ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe) là **phát sinh**, khi thêm có thể chọn nhiều tháng cùng lúc.
+- Khoản lặp lại mọi tháng là **cố định**; khoản chỉ có ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe) là **phát sinh**, khi thêm có thể chọn nhiều tháng cùng lúc. Một khoản cố định có thể mang **số tiền riêng cho một tháng** (kể cả 0) mà không ảnh hưởng các tháng khác.
+- **Thẻ tín dụng**: một khoản chi cố định được đánh dấu "Tín dụng" là *dự chi* mỗi kỳ sao kê. Kỳ sao kê chốt vào ngày sao kê (mặc định 14, đổi trong Cài đặt) và tính cho tháng có ngày chốt đó: kỳ 15/11–14/12 thuộc tháng 12. *Đã xài* = tổng giao dịch thẻ trong kỳ (trừ hoàn tiền). Khi đã xài vượt dự chi, Finy cảnh báo ở Tổng quan, bật thông báo sau khi đồng bộ, và cộng phần vượt vào chi của tháng đó. Giao dịch thẻ không tính vào quỹ chi tiêu hằng ngày.
 - **Hạn mức hôm nay** = (quỹ chi tiêu hằng ngày − đã tiêu các ngày trước trong tháng) / số ngày còn lại. Quỹ là khoản chi cố định được bật "quỹ chi tiêu hằng ngày".
 - **Kế hoạch**: mô phỏng theo tháng từ thu chi cố định và các khoản phát sinh đã nhập; thu nhập tăng theo %/năm, chi tiêu tăng theo lạm phát, tiền để dành sinh lãi. Khoản vay có nhập dư nợ sẽ được trả dần và giải phóng dòng tiền khi hết nợ; khoản chưa nhập dư nợ được coi là trả suốt kế hoạch.
 
@@ -34,7 +35,7 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 Những gì rời khỏi máy:
 
 - Câu hỏi trong tab Finy kèm bản tóm tắt tài chính hiện tại → gửi tới API của Anthropic.
-- Nội dung email HSBC khi đồng bộ → gửi tới API của Anthropic để tách số tiền, nơi giao dịch. Chỉ email có người gửi thuộc `hsbc.com.vn` / `hsbc.com` mới được đọc.
+- Email HSBC: chỉ email có người gửi thuộc `hsbc.com.vn` / `hsbc.com` mới được đọc. Email báo giao dịch thẻ tín dụng (định dạng cố định) được đọc ngay trên máy, không gửi đi đâu. Chỉ email HSBC có định dạng khác mới được gửi tới API của Anthropic để tách số tiền, nơi giao dịch.
 - Yêu cầu đọc thư → gửi tới Gmail API (quyền chỉ-đọc).
 
 **API key của Claude nằm trong file APK.** Ai có file APK đều lấy được key, nên đừng chia sẻ APK. Key không nằm trong repo này.
@@ -59,18 +60,21 @@ Các file **không bao giờ được commit** (đã có trong `.gitignore`): `.
 
 ## Kết nối Gmail (làm một lần)
 
-Google yêu cầu mỗi app phải được đăng ký trước khi đọc Gmail. Làm trên [Google Cloud Console](https://console.cloud.google.com/), đăng nhập bằng chính tài khoản Gmail nhận thư HSBC:
+Google yêu cầu mỗi app phải có một *OAuth client* gắn với package và chữ ký của APK trước khi được đọc Gmail. Google không có API để tạo phần này, nên có vài cú bấm phải làm tay trên trình duyệt (đăng nhập bằng chính tài khoản Gmail nhận thư HSBC).
 
-1. Tạo một project mới.
-2. **APIs & Services → Library** → bật **Gmail API**.
-3. **OAuth consent screen**: loại *External*, điền tên app và email. Ở phần *Audience* thêm địa chỉ Gmail của bạn vào **Test users**. Ở phần *Data access* thêm scope `https://www.googleapis.com/auth/gmail.readonly`.
-4. **Credentials → Create credentials → OAuth client ID → Android**: package name `com.finy.app`, SHA-1 là dòng `npm run apk` đã in ra.
-5. Mở app → **Cài đặt → Kết nối Gmail**, chọn tài khoản và đồng ý cấp quyền đọc thư. Sau đó vào tab **Giao dịch → Đồng bộ giao dịch HSBC**.
+Cách ngắn nhất là qua Firebase, vì Firebase tự tạo OAuth client và màn hình đồng ý:
+
+1. Chọn (hoặc tạo) một project trên [Firebase Console](https://console.firebase.google.com/). Trong *Project settings* thêm app Android với package `com.finy.app` và **SHA-1** mà `npm run apk` in ra. Bật **Gmail API** cho project đó trong [Google Cloud Console](https://console.cloud.google.com/apis/library/gmail.googleapis.com).
+2. Vào **Authentication → Sign-in method → Google → Enable**, chọn email hỗ trợ, **Save**. Bước này khiến Google tạo OAuth client cho app.
+3. Trên điện thoại: **Cài đặt → Kết nối Gmail**, chọn tài khoản và đồng ý cho Finy đọc thư. App sẽ lấy giao dịch HSBC ngay sau đó, và tự đồng bộ lại mỗi lần mở app.
+
+Có thể mở thẳng màn đăng nhập từ máy tính: `adb shell am start -a android.intent.action.VIEW -d "finy://settings?gmail=connect" com.finy.app` (app sẽ hỏi PIN trước).
 
 Ghi chú:
 
-- Khi consent screen ở chế độ *Testing*, Google bắt cấp quyền lại sau mỗi 7 ngày. Bấm **Publish app** để bỏ giới hạn này (app chưa xác minh vẫn dùng được cho chính bạn, chỉ hiện thêm một màn hình cảnh báo).
-- Lỗi `DEVELOPER_ERROR` khi kết nối nghĩa là package name hoặc SHA-1 ở bước 4 chưa khớp với APK đang cài.
+- Vì app chưa được Google xác minh, màn đăng nhập hiện cảnh báo "Google hasn't verified this app": bấm **Advanced → Go to … (unsafe)** để tiếp tục. Đây là app của chính bạn, chỉ xin quyền *đọc* thư.
+- Nếu Google báo "Access blocked … has not completed the Google verification process", màn hình đồng ý đang ở chế độ *Testing*: vào [Google Auth Platform → Audience](https://console.cloud.google.com/auth/audience) của project, thêm địa chỉ Gmail của bạn vào **Test users** (hoặc bấm **Publish app**). Ở chế độ Testing, Google bắt cấp quyền lại mỗi 7 ngày.
+- Lỗi `DEVELOPER_ERROR` trong app nghĩa là chưa có OAuth client khớp package + SHA-1 của APK đang cài (chưa làm bước 2, hoặc APK được ký bằng keystore khác).
 - Bộ lọc email mặc định là `from:(hsbc.com.vn OR hsbc.com) newer_than:45d`, sửa được trong Cài đặt.
 
 ## Finy tự chỉnh giao diện như thế nào
@@ -82,17 +86,18 @@ Những gì nằm ngoài cấu hình (thêm màn hình mới, đổi bố cục 
 ## Cấu trúc mã nguồn
 
 ```
-src/app/            màn hình (Expo Router): 5 tab + settings
+src/app/            màn hình (Expo Router): 5 tab + month/[month] (chi tiết tháng) + settings
 src/components/     ui.tsx (khối giao diện theo theme), charts.tsx, sheets.tsx, LockScreen.tsx
 src/lib/
   store.ts          trạng thái toàn app, ghi xuống DB mã hoá
   db.ts             SQLite + SQLCipher
   security.ts       PIN, vân tay, khoá DB
-  finance.ts        bảng thu chi theo tháng, hạn mức ngày (thuần, có test)
+  finance.ts        bảng thu chi theo tháng, kỳ sao kê tín dụng, hạn mức ngày (thuần, có test)
   plan.ts           dự phóng 5–10 năm                    (thuần, có test)
   theme.ts          cấu hình giao diện + kiểm tra tương phản (thuần, có test)
   claude.ts         Claude: tư vấn + công cụ sửa dữ liệu / giao diện
-  gmail.ts, hsbc.ts đọc Gmail, tách giao dịch HSBC bằng Claude
+  gmail.ts, hsbc.ts đọc Gmail, nhập giao dịch HSBC
+  mailText.ts       đọc email thẻ tín dụng HSBC ngay trên máy  (thuần, có test)
 plugins/            config plugin ký APK bằng keystore riêng
 tests/              npm test
 ```

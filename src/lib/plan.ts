@@ -1,7 +1,7 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { monthFlow, netWorth } from './finance';
+import { monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
-import type { Account, FixedItem, OneOff, PlanDebt, PlanGoal, PlanParams } from './types';
+import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
 export const DEFAULT_PLAN: PlanParams = {
   years: 10,
@@ -27,25 +27,20 @@ export interface PlanInputs {
   debts: PlanDebt[];
   goals: PlanGoal[];
   /**
-   * Net one-off cash flow (income - expense) by simulation month, where 1 is
-   * the current month. Comes from the one-offs entered in the cash-flow table.
+   * Net extra cash flow (income - expense) by simulation month, where 1 is
+   * the current month: one-offs plus per-month adjustments of fixed items.
    */
   extraByMonth?: Record<number, number>;
 }
 
 /**
  * Fills in the plan's "follow my budget" placeholders from the cash-flow data:
- * fixed incomes, fixed expenses, loan repayments, and the one-offs that fall
- * inside the horizon.
+ * fixed incomes, fixed expenses, loan repayments, and everything that makes a
+ * particular month differ from the usual one (one-offs and per-month adjustments).
  */
-export function resolvePlan(
-  plan: PlanParams,
-  fixed: FixedItem[],
-  oneOffs: OneOff[],
-  accounts: Account[],
-  currentMonth: string,
-): PlanInputs {
-  const base = monthFlow(fixed, [], currentMonth);
+export function resolvePlan(plan: PlanParams, budget: Budget, accounts: Account[], currentMonth: string): PlanInputs {
+  const { fixed, oneOffs, overrides } = budget;
+  const base = monthFlow({ fixed, oneOffs: [], overrides: {} }, currentMonth);
   const fixedDebts: PlanDebt[] = fixed
     .filter((f) => f.direction === 'out' && f.kind === 'debt' && f.amount > 0)
     .map((f) => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }));
@@ -53,12 +48,20 @@ export function resolvePlan(
 
   const extraByMonth: Record<number, number> = {};
   const lastMonth = shiftMonth(currentMonth, years * 12 - 1);
-  for (const o of oneOffs) {
-    if (o.month < currentMonth || o.month > lastMonth) continue;
-    const [y0, m0] = currentMonth.split('-').map(Number);
-    const [y1, m1] = o.month.split('-').map(Number);
+  const [y0, m0] = currentMonth.split('-').map(Number);
+  const add = (month: string, net: number) => {
+    if (month < currentMonth || month > lastMonth || net === 0) return;
+    const [y1, m1] = month.split('-').map(Number);
     const index = (y1 - y0) * 12 + (m1 - m0) + 1;
-    extraByMonth[index] = (extraByMonth[index] ?? 0) + (o.direction === 'in' ? o.amount : -o.amount);
+    extraByMonth[index] = (extraByMonth[index] ?? 0) + net;
+  };
+  for (const o of oneOffs) add(o.month, o.direction === 'in' ? o.amount : -o.amount);
+  for (const [month, byId] of Object.entries(overrides)) {
+    for (const f of fixed) {
+      const amount = byId[f.id];
+      if (amount === undefined) continue;
+      add(month, f.direction === 'in' ? amount - f.amount : f.amount - amount);
+    }
   }
 
   return {

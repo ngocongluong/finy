@@ -1,7 +1,7 @@
 // Add / edit forms, shared by several screens.
 import React, { useEffect, useState } from 'react';
 import { Alert, Switch, View } from 'react-native';
-import { dateKey, dayLabel, monthKey, monthShort, shiftMonth } from '../lib/format';
+import { dateKey, dayLabel, fmtVND, monthKey, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
 import type { Account, AccountKind, FixedItem, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useUi } from './ui';
@@ -43,6 +43,7 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
   const [direction, setDirection] = useState<'out' | 'in'>('out');
   const [date, setDate] = useState(dateKey());
   const [counts, setCounts] = useState(true);
+  const [credit, setCredit] = useState(false);
   const [key, setKey] = useState(0);
 
   useEffect(() => {
@@ -52,20 +53,22 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
     setDirection(tx?.direction ?? 'out');
     setDate(tx?.date ?? dateKey());
     setCounts(tx?.countsDaily ?? true);
+    setCredit(!!tx?.credit);
     setKey((k) => k + 1); // remount the amount field with the new initial value
   }, [visible, tx]);
 
   const today = dateKey();
   const save = async () => {
     if (!(amount > 0)) return;
-    const countsDaily = direction === 'out' && counts;
+    // A card purchase is tracked against the credit-card plan instead of the daily cash bucket.
+    const countsDaily = direction === 'out' && counts && !credit;
     if (tx) {
       const [y, m, d] = date.split('-').map(Number);
       const old = new Date(tx.ts);
       const ts = date === tx.date ? tx.ts : new Date(y, m - 1, d, old.getHours(), old.getMinutes()).getTime();
-      await updateTx({ ...tx, amount, note: note.trim(), direction, date, ts, countsDaily });
+      await updateTx({ ...tx, amount, note: note.trim(), direction, date, ts, countsDaily, credit: credit || undefined });
     } else {
-      await addTx({ amount, note: note.trim() || (direction === 'out' ? 'Chi tiêu' : 'Thu'), direction, date, source: 'manual', countsDaily });
+      await addTx({ amount, note: note.trim() || (direction === 'out' ? 'Chi tiêu' : 'Thu'), direction, date, source: 'manual', countsDaily, credit: credit || undefined });
     }
     onClose();
   };
@@ -85,6 +88,9 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
         <IconBtn name="chevron-forward" onPress={() => date < today && setDate(shiftDate(date, 1))} label="Ngày sau" />
       </Row>
       {direction === 'out' ? (
+        <Toggle label="Quẹt thẻ tín dụng" hint="Tính vào kỳ sao kê tín dụng thay vì quỹ chi tiêu hằng ngày." value={credit} onChange={setCredit} />
+      ) : null}
+      {direction === 'out' && !credit ? (
         <Toggle label="Tính vào chi tiêu hằng ngày" hint="Tắt với khoản trả nợ, chuyển tiền để dành…" value={counts} onChange={setCounts} />
       ) : null}
       {tx ? (
@@ -110,28 +116,31 @@ export function FixedSheet({
   onClose,
   direction,
   item,
+  initialKind = 'expense',
 }: {
   visible: boolean;
   onClose: () => void;
   direction: 'in' | 'out';
   item?: FixedItem | null;
+  /** Kind preselected when adding a new expense. */
+  initialKind?: 'expense' | 'debt' | 'credit';
 }) {
   const upsertFixed = useStore((s) => s.upsertFixed);
   const deleteFixed = useStore((s) => s.deleteFixed);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState(0);
-  const [kind, setKind] = useState<'expense' | 'debt'>('expense');
+  const [kind, setKind] = useState<'expense' | 'debt' | 'credit'>('expense');
   const [daily, setDaily] = useState(false);
   const [key, setKey] = useState(0);
 
   useEffect(() => {
     if (!visible) return;
-    setName(item?.name ?? '');
+    setName(item?.name ?? (initialKind === 'credit' ? 'Thẻ tín dụng' : ''));
     setAmount(item?.amount ?? 0);
-    setKind(item?.kind ?? 'expense');
+    setKind(item?.kind ?? initialKind);
     setDaily(!!item?.daily);
     setKey((k) => k + 1);
-  }, [visible, item]);
+  }, [visible, item, initialKind]);
 
   const out = direction === 'out';
   const what = out ? 'chi cố định' : 'thu cố định';
@@ -160,11 +169,15 @@ export function FixedSheet({
           options={[
             { value: 'expense', label: 'Chi tiêu' },
             { value: 'debt', label: 'Trả nợ vay' },
+            { value: 'credit', label: 'Tín dụng' },
           ]}
         />
       ) : null}
       {out && kind === 'expense' ? (
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
+      ) : null}
+      {out && kind === 'credit' ? (
+        <Txt v="small">Số tiền dự định quẹt thẻ tín dụng mỗi kỳ sao kê. Finy so với số đã quẹt lấy từ email HSBC và báo khi vượt. Chỉ một khoản được là dự chi tín dụng.</Txt>
       ) : null}
       {item ? (
         <Btn
@@ -177,6 +190,83 @@ export function FixedSheet({
               onClose();
             })
           }
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
+/**
+ * Edit what a fixed item amounts to in one month.
+ * The amount can be saved for that month only, or as the new usual amount.
+ */
+export function MonthLineSheet({
+  visible,
+  onClose,
+  month,
+  item,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  month: string;
+  item: FixedItem | null;
+}) {
+  const upsertFixed = useStore((s) => s.upsertFixed);
+  const setOverride = useStore((s) => s.setOverride);
+  const current = useStore((s) => (item ? s.overrides[month]?.[item.id] : undefined));
+  const [amount, setAmount] = useState(0);
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    if (!visible || !item) return;
+    setAmount(current ?? item.amount);
+    setKey((k) => k + 1);
+    // Only when the sheet opens: later store changes must not reset what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, item?.id, month]);
+
+  if (!item) return null;
+  const label = monthShort(month);
+  const overridden = current !== undefined;
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={item.name}
+      footer={
+        <Btn
+          label={`Lưu riêng cho ${label}`}
+          icon="checkmark"
+          onPress={() => {
+            setOverride(month, item.id, amount);
+            onClose();
+          }}
+        />
+      }>
+      <AmountField key={key} label={`Số tiền trong ${label}`} value={amount} onChange={setAmount} autoFocus />
+      <Txt v="small">
+        Mức cố định hàng tháng: {fmtVND(item.amount)}.{overridden ? ` ${label} đang dùng mức riêng ${fmtVND(current)}.` : ''} Nhập 0 nếu tháng này không có khoản này.
+      </Txt>
+      <Btn
+        label="Áp dụng cho mọi tháng"
+        kind="ghost"
+        icon="repeat-outline"
+        disabled={!(amount > 0)}
+        onPress={() => {
+          upsertFixed({ ...item, amount });
+          setOverride(month, item.id, null);
+          onClose();
+        }}
+      />
+      {overridden ? (
+        <Btn
+          label={`Bỏ mức riêng, về ${fmtVND(item.amount)}`}
+          kind="ghost"
+          icon="arrow-undo-outline"
+          onPress={() => {
+            setOverride(month, item.id, null);
+            onClose();
+          }}
         />
       ) : null}
     </Sheet>

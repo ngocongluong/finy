@@ -5,6 +5,7 @@ import type { CustomCard, HomeSectionId, MetricKey, UiColors, UiConfig } from '.
 
 export const HOME_SECTIONS: { id: HomeSectionId; label: string }[] = [
   { id: 'today', label: 'Chi tiêu hôm nay' },
+  { id: 'credit', label: 'Thẻ tín dụng kỳ này' },
   { id: 'month', label: 'Tháng này' },
   { id: 'networth', label: 'Tổng tiền hiện có' },
   { id: 'budget', label: 'Các khoản chi lớn nhất' },
@@ -20,6 +21,8 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   extraIncome: 'Thu phát sinh tháng này',
   extraExpense: 'Chi phát sinh tháng này',
   debtPayment: 'Trả nợ mỗi tháng',
+  creditSpent: 'Đã xài tín dụng kỳ này',
+  creditPlanned: 'Dự chi tín dụng mỗi kỳ',
   spendRatio: 'Chi/Thu',
   savingRate: 'Tỷ lệ để dành',
   netWorth: 'Tổng tiền hiện có',
@@ -182,5 +185,20 @@ export function applyUiPatch(current: UiConfig, patch: UiPatch): { ui: UiConfig 
 export function normalizeUi(raw: unknown): UiConfig {
   if (!raw || typeof raw !== 'object') return DEFAULT_UI;
   const res = applyUiPatch(DEFAULT_UI, raw as UiPatch);
-  return 'ui' in res ? res.ui : DEFAULT_UI;
+  if (!('ui' in res)) return DEFAULT_UI;
+  // Sections added in a newer app version are missing from a saved layout; applyUiPatch
+  // appends them at the end. Move each to where the default layout has it instead.
+  const saved = new Set(((raw as UiPatch).home ?? []).map((h) => h.id));
+  if (saved.size === 0) return res.ui;
+  const home = res.ui.home.filter((h) => saved.has(h.id));
+  DEFAULT_UI.home.forEach((h, i) => {
+    if (saved.has(h.id)) return;
+    const before = DEFAULT_UI.home.slice(0, i).map((x) => x.id);
+    let at = 0;
+    home.forEach((x, j) => {
+      if (before.includes(x.id)) at = j + 1;
+    });
+    home.splice(at, 0, h);
+  });
+  return { ...res.ui, home };
 }

@@ -1,11 +1,11 @@
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, View } from 'react-native';
 import { TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Empty, IconBtn, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
 import { describeError } from '../../lib/claude';
-import { dateKey, dayLabel, fmtDateTime } from '../../lib/format';
-import { syncHsbc } from '../../lib/hsbc';
+import { dateKey, dayLabel, fmtDateTime, fmtVND } from '../../lib/format';
+import { creditOverMessage, shouldAlertCreditOver, syncHsbc } from '../../lib/hsbc';
 import { useStore } from '../../lib/store';
 import type { Tx } from '../../lib/types';
 
@@ -43,8 +43,9 @@ export default function Transactions() {
         text:
           r.scanned === 0
             ? 'Không có email HSBC mới.'
-            : `Đã thêm ${r.imported} giao dịch từ ${r.scanned} email mới${r.skipped ? ` (${r.skipped} email không phải giao dịch)` : ''}${r.truncated ? `. ${r.truncated} email quá dài nên chỉ đọc phần đầu` : ''}.`,
+            : `Đã thêm ${r.imported} giao dịch từ ${r.scanned} email mới${r.skipped ? ` (${r.skipped} email không phải giao dịch)` : ''}${r.unread ? `. ${r.unread} email định dạng lạ chưa đọc được vì chưa có key Claude` : ''}${r.truncated ? `. ${r.truncated} email quá dài nên chỉ đọc phần đầu` : ''}.`,
       });
+      if (r.creditOver && (await shouldAlertCreditOver(r.creditOver))) Alert.alert('Chi tín dụng vượt dự chi', creditOverMessage(r.creditOver, fmtVND));
     } catch (e) {
       setStatus({ text: describeError(e), error: true });
     } finally {
@@ -97,7 +98,7 @@ export default function Transactions() {
                     <Txt numberOfLines={1}>{t.note}</Txt>
                     <Txt v="small">
                       {t.source === 'hsbc' ? 'HSBC' : 'Nhập tay'}
-                      {t.direction === 'out' && !t.countsDaily ? ' · không tính vào chi hằng ngày' : ''}
+                      {t.credit ? ' · thẻ tín dụng' : t.direction === 'out' && !t.countsDaily ? ' · không tính vào chi hằng ngày' : ''}
                     </Txt>
                   </View>
                   <Amount value={t.direction === 'out' ? -t.amount : t.amount} color={t.direction === 'in' ? c.positive : c.text} signed />
