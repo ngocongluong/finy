@@ -97,15 +97,73 @@ export async function setBiometricPref(on: boolean): Promise<void> {
   await SecureStore.setItemAsync(K_BIO, on ? '1' : '0');
 }
 
-export async function biometricUnlock(): Promise<boolean> {
-  if (!(await getBiometricPref())) return false;
-  if ((await lockedForSeconds()) > 0) return false;
-  const res = await LocalAuthentication.authenticateAsync({
+// The fingerprint request waiting for an answer, if any. Android drops a request made while
+// the app is in the background without answering it, and the native module then refuses
+// every later request ("app_cancel") until that one is cancelled.
+let asking: Promise<LocalAuthentication.LocalAuthenticationResult> | null = null;
+
+// The unlock attempt in progress (checks, prompt, answer) and when it started.
+let flight: { p: Promise<boolean>; at: number } | null = null;
+
+/** An unlock attempt is waiting for an answer (the prompt is coming up or showing, or got stuck). */
+export function biometricPending(): boolean {
+  return flight !== null;
+}
+
+/** Clears a request that is stuck, then gives AndroidX time to take its old prompt down. */
+async function resetBiometric(): Promise<void> {
+  await LocalAuthentication.cancelAuthenticate().catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 400));
+}
+
+function askFingerprint(): Promise<LocalAuthentication.LocalAuthenticationResult> {
+  const p = LocalAuthentication.authenticateAsync({
     promptMessage: 'Mở khoá Finy',
     cancelLabel: 'Dùng mã PIN',
     disableDeviceFallback: true,
   });
-  return res.success;
+  asking = p;
+  const done = () => {
+    if (asking === p) asking = null;
+  };
+  p.then(done, done);
+  return p;
+}
+
+/**
+ * Asks for the fingerprint; true when it matched. Call it only while the app
+ * is in the foreground. Asked again while a prompt is just coming up, it waits
+ * for that same prompt (cancelling it would make the prompt blink and miss the
+ * finger). An attempt older than that and still unanswered never showed (a
+ * showing prompt covers the button): it is cleared and asked again, as is one
+ * the native side refuses because it still waits for an earlier request.
+ */
+export function biometricUnlock(): Promise<boolean> {
+  if (flight && Date.now() - flight.at < 1500) return flight.p;
+  const stale = flight !== null;
+  const p = (async () => {
+    if (!(await getBiometricPref())) return false;
+    if ((await lockedForSeconds()) > 0) return false;
+    try {
+      if (stale || asking) await resetBiometric();
+      let res = await askFingerprint();
+      if (!res.success && res.error === 'app_cancel') {
+        await resetBiometric();
+        res = await askFingerprint();
+      }
+      return res.success;
+    } catch {
+      // No prompt could be shown (no activity): the PIN still works.
+      return false;
+    }
+  })();
+  const entry = { p, at: Date.now() };
+  flight = entry;
+  const done = () => {
+    if (flight === entry) flight = null;
+  };
+  p.then(done, done);
+  return p;
 }
 
 /** Returns the database key, creating it on first run. */

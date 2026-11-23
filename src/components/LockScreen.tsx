@@ -1,9 +1,9 @@
 // Full-screen lock: PIN pad + fingerprint. Also handles first-run PIN setup.
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { AppState, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { biometricAvailable, biometricUnlock, getBiometricPref, lockedForSeconds, PIN_LENGTH, setPin, verifyPin } from '../lib/security';
+import { biometricAvailable, biometricPending, biometricUnlock, getBiometricPref, lockedForSeconds, PIN_LENGTH, setPin, verifyPin } from '../lib/security';
 import { useStore } from '../lib/store';
 import { DEFAULT_UI } from '../lib/theme';
 
@@ -25,28 +25,43 @@ export function LockScreen({ mode }: { mode: 'setup' | 'unlock' }) {
   const [wait, setWait] = useState(0);
   const [busy, setBusy] = useState(false);
   const [bioOk, setBioOk] = useState(false);
-  const triedBio = useRef(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
 
   const tryBiometric = useCallback(async () => {
-    if (busy) return;
+    if (busyRef.current) return;
     if (await biometricUnlock()) await unlock();
-  }, [busy, unlock]);
+  }, [unlock]);
 
+  // Offer the fingerprint by itself when the lock screen shows, and again whenever the app
+  // comes back to the foreground. Never while the app is in the background (the lock
+  // screen appears then when Finy locks on leaving): Android drops that request silently
+  // and the fingerprint would stop answering.
   useEffect(() => {
     if (mode !== 'unlock') return;
     let alive = true;
-    (async () => {
-      const [avail, allowed, sec] = await Promise.all([biometricAvailable(), getBiometricPref(), lockedForSeconds()]);
-      if (!alive) return;
-      setBioOk(avail && allowed);
-      setWait(sec);
-      if (avail && allowed && sec === 0 && !triedBio.current) {
-        triedBio.current = true;
-        tryBiometric();
+    // One offer at a time: the lock screen appearing and the app coming back can happen together.
+    let offering = false;
+    const offer = async () => {
+      if (offering) return;
+      offering = true;
+      try {
+        const [avail, allowed, sec] = await Promise.all([biometricAvailable(), getBiometricPref(), lockedForSeconds()]);
+        if (!alive) return;
+        setBioOk(avail && allowed);
+        setWait(sec);
+        if (avail && allowed && sec === 0 && AppState.currentState === 'active' && !biometricPending()) await tryBiometric();
+      } finally {
+        offering = false;
       }
-    })();
+    };
+    offer();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') offer();
+    });
     return () => {
       alive = false;
+      sub.remove();
     };
   }, [mode, tryBiometric]);
 
