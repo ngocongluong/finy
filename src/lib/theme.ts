@@ -4,7 +4,6 @@
 import type { CustomCard, HomeSectionId, MetricKey, UiColors, UiConfig } from './types';
 
 export const HOME_SECTIONS: { id: HomeSectionId; label: string }[] = [
-  { id: 'today', label: 'Chi tiêu hôm nay' },
   { id: 'credit', label: 'Thẻ tín dụng kỳ này' },
   { id: 'month', label: 'Tháng này' },
   { id: 'networth', label: 'Tổng tiền hiện có' },
@@ -26,7 +25,7 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   spendRatio: 'Chi/Thu',
   savingRate: 'Tỷ lệ để dành',
   netWorth: 'Tổng tiền hiện có',
-  dailyAllowance: 'Hạn mức hôm nay',
+  dailyAllowance: 'Hạn mức chi tiêu hôm nay',
   spentToday: 'Đã tiêu hôm nay',
   spentMonth: 'Đã tiêu trong tháng',
   projectedNetWorth: 'Tài sản cuối kế hoạch',
@@ -137,9 +136,12 @@ export function applyUiPatch(current: UiConfig, patch: UiPatch): { ui: UiConfig 
   const known = new Set(HOME_SECTIONS.map((s) => s.id));
   let home = current.home;
   if (patch.home) {
+    // Sections that were removed from the app (e.g. the old daily-allowance card) are dropped quietly.
+    const REMOVED = ['today'];
+    const wanted = patch.home.filter((h) => !REMOVED.includes(h.id as string));
     const seen = new Set<HomeSectionId>();
     const next: UiConfig['home'] = [];
-    for (const h of patch.home) {
+    for (const h of wanted) {
       if (!known.has(h.id)) {
         errors.push(`home: unknown section "${String(h.id)}"`);
         continue;

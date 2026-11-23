@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
-import { ALLOWED_SENDER_DOMAINS, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
+import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
 import type { FixedItem, OneOff, Tx } from '../src/lib/types';
@@ -344,13 +344,13 @@ test('UI patches: valid changes apply, unreadable or malformed ones are rejected
   assert.deepEqual(normalizeUi(DEFAULT_UI), DEFAULT_UI);
   assert.deepEqual(normalizeUi(null), DEFAULT_UI);
 
-  const ok = applyUiPatch(DEFAULT_UI, { colors: { accent: '#34D399' }, radius: 99, amountFormat: 'compact', home: [{ id: 'plan', visible: true }, { id: 'today', visible: false }] });
+  const ok = applyUiPatch(DEFAULT_UI, { colors: { accent: '#34D399' }, radius: 99, amountFormat: 'compact', home: [{ id: 'plan', visible: true }, { id: 'month', visible: false }] });
   assert.ok('ui' in ok);
   if ('ui' in ok) {
     assert.equal(ok.ui.colors.accent, '#34D399');
     assert.equal(ok.ui.radius, 28); // clamped
     assert.equal(ok.ui.amountFormat, 'compact');
-    assert.deepEqual(ok.ui.home.slice(0, 2), [{ id: 'plan', visible: true }, { id: 'today', visible: false }]);
+    assert.deepEqual(ok.ui.home.slice(0, 2), [{ id: 'plan', visible: true }, { id: 'month', visible: false }]);
     assert.equal(ok.ui.home.length, DEFAULT_UI.home.length); // nothing lost
   }
 
@@ -362,12 +362,15 @@ test('UI patches: valid changes apply, unreadable or malformed ones are rejected
   assert.ok('errors' in unknown);
 });
 
-test('a layout saved before a section existed gets the new section where the default has it', () => {
-  const old = { ...DEFAULT_UI, home: [{ id: 'plan' as const, visible: true }, { id: 'today' as const, visible: false }, { id: 'month' as const, visible: true }] };
-  const home = normalizeUi(old).home.map((h) => h.id);
-  assert.deepEqual(home.slice(0, 4), ['plan', 'today', 'credit', 'month']); // credit right after today, saved order kept
+test('a saved layout: removed sections are dropped, new ones go where the default has them', () => {
+  const old = { ...DEFAULT_UI, home: [{ id: 'plan', visible: true }, { id: 'today', visible: false }, { id: 'month', visible: false }] } as never;
+  const ui = normalizeUi(old);
+  const home = ui.home.map((h) => h.id);
+  assert.deepEqual(home.slice(0, 3), ['credit', 'plan', 'month']); // credit first, as in the default; saved order kept
+  assert.ok(!home.includes('today' as never));
   assert.equal(home.length, DEFAULT_UI.home.length);
-  assert.equal(normalizeUi(old).home.find((h) => h.id === 'today')!.visible, false);
+  assert.equal(ui.home.find((h) => h.id === 'month')!.visible, false);
+  assert.deepEqual(ui.colors, DEFAULT_UI.colors); // the rest of the saved config is not thrown away
 });
 
 test('a saved custom card that uses a metric which no longer exists keeps its text', () => {
@@ -390,6 +393,34 @@ test('only mail from the bank is trusted', () => {
   assert.ok(!senderAllowed('HSBC <alerts@hsbc.com.vn.evil.io>', domains));
   assert.ok(!senderAllowed('"alerts@hsbc.com.vn" <phish@gmail.com>', domains));
   assert.ok(!senderAllowed('x@nothsbc.com', domains));
+});
+
+test('a foreign-currency card purchase is priced from the balance change, else estimated', () => {
+  // Balance went from 30,000,000 to 31,320,500 after a 50 USD purchase: that is what the bank booked.
+  assert.deepEqual(fxToVnd(50, 'USD', 30_000_000, 31_320_500), { amount: 1_320_500, estimated: false });
+  // A payment landed in between (the balance fell): not usable, fall back to the rate.
+  assert.deepEqual(fxToVnd(10, 'USD', 30_000_000, 12_000_000), { amount: 265_000, estimated: true });
+  assert.deepEqual(fxToVnd(10, 'usd', null, 5_000_000), { amount: 265_000, estimated: true });
+  assert.equal(fxToVnd(10, 'XYZ', null, null), null);
+});
+
+test('a fixed expense charged to the card is part of every cycle, not a separate expense', () => {
+  const b: Budget = {
+    fixed: [
+      ...fixed,
+      { id: 'cc', name: 'Thẻ tín dụng', amount: 35_000_000, direction: 'out', kind: 'credit' },
+      { id: 'inst', name: 'Trả góp điện thoại', amount: 3_000_000, direction: 'out', kind: 'expense', onCard: true },
+    ],
+    oneOffs: [],
+    overrides: {},
+  };
+  const tx: Tx = { id: 't', ts: 0, date: '2026-11-20', amount: 30_000_000, direction: 'out', note: '', source: 'hsbc', countsDaily: false, credit: true };
+  const closed = monthFlow(b, '2026-12', { txs: [tx], statementDay: 14, today: '2026-12-20' });
+  assert.equal(closed.creditSpent, 33_000_000);
+  assert.equal(closed.creditCounted, 33_000_000);
+  assert.equal(closed.expense, 30_000_000 + 33_000_000); // not counted a second time
+  assert.ok(!closed.expenseLines.some((l) => l.id === 'inst'));
+  assert.deepEqual(closed.onCardLines.map((l) => l.id), ['inst']);
 });
 
 test('only bank mail that reads like a transaction is sent on to Claude', () => {

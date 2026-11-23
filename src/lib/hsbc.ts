@@ -9,7 +9,7 @@ import * as db from './db';
 import { creditCycle, cycleMonthOf, monthFlow } from './finance';
 import { dateKey } from './format';
 import { getEmail, listMessageIds, senderAllowed, type Email } from './gmail';
-import { ALLOWED_SENDER_DOMAINS, looksLikeTransaction, parseHsbcCardEmail } from './mailText';
+import { ALLOWED_SENDER_DOMAINS, fxToVnd, looksLikeTransaction, parseHsbcCardEmail, type HsbcCardEmail } from './mailText';
 import { useStore } from './store';
 
 const BODY_LIMIT = 6000;
@@ -77,6 +77,56 @@ export function currentCreditStatus() {
   return { cycle, spent: flow.creditSpent, planned: flow.creditPlanned, over: flow.creditOver, hasPlan: flow.creditLine !== null };
 }
 
+/**
+ * Imports card alerts oldest first. Every alert states the outstanding
+ * balance after the purchase; those balances are kept (per Gmail message) so a
+ * later sync can still find the alert that came before.
+ */
+async function importCardAlerts(cards: { email: Email; card: HsbcCardEmail }[]): Promise<number> {
+  const balances = (await db.kvGet<Record<string, number>>('cardBalances')) ?? {};
+  // Earlier alerts already in the app, with their balance, to look back from.
+  const history = useStore
+    .getState()
+    .txs.filter((t) => t.credit && t.extId && balances[t.extId] !== undefined)
+    .map((t) => ({ ts: t.ts, balance: balances[t.extId!] }));
+  let imported = 0;
+  for (const { email, card } of [...cards].sort((a, b) => a.email.ts - b.email.ts)) {
+    let amount = Math.round(card.amount);
+    let note = card.merchant.slice(0, 60) || 'HSBC';
+    if (card.currency !== 'VND') {
+      const prev = history.filter((h) => h.ts < email.ts).sort((a, b) => b.ts - a.ts)[0];
+      const vnd = fxToVnd(card.amount, card.currency, prev?.balance ?? null, card.balance);
+      if (vnd === null) continue; // a currency with no known rate: left for a later version
+      amount = vnd.amount;
+      note = `${note} (${card.amount} ${card.currency}${vnd.estimated ? ', ước tính' : ''})`.slice(0, 80);
+    }
+    const added = await useStore.getState().addTx({
+      amount,
+      direction: 'out',
+      note,
+      source: 'hsbc',
+      credit: true,
+      // Card purchases are tracked against the credit-card plan, not the daily cash bucket.
+      countsDaily: false,
+      extId: email.id,
+      // The email states the day only; the time is when HSBC sent the alert, usually seconds after the swipe.
+      ts: email.ts,
+      date: card.date,
+    });
+    if (added) imported++;
+    if (card.balance !== null) {
+      balances[email.id] = card.balance;
+      history.push({ ts: email.ts, balance: card.balance });
+    }
+    const known = useStore.getState().creditCard;
+    if (card.balance !== null && card.available !== null && (!known || email.ts > known.asOf)) {
+      useStore.getState().setCreditCard({ last4: card.last4, balance: card.balance, available: card.available, asOf: email.ts });
+    }
+  }
+  await db.kvSet('cardBalances', balances);
+  return imported;
+}
+
 let running: Promise<SyncResult> | null = null;
 let progressListeners: ((msg: string) => void)[] = [];
 export const isSyncing = () => running !== null;
@@ -113,6 +163,9 @@ async function doSync(onProgress: (msg: string) => void): Promise<SyncResult> {
     const result: SyncResult = { found: ids.length, rejectedDomains: [], scanned: fresh.length, imported: 0, skipped: 0, unread: 0, truncated: 0, creditOver: null };
     const notTx: string[] = [];
     const canAskClaude = !!apiKey();
+    // Card alerts are imported after all mail is read, oldest first, so each
+    // foreign-currency purchase can be priced from the balance change since the previous alert.
+    const cards: { email: Email; card: HsbcCardEmail }[] = [];
 
     for (let i = 0; i < fresh.length; i += BATCH) {
       onProgress(`Đang đọc email ${Math.min(i + BATCH, fresh.length)}/${fresh.length}…`);
@@ -132,34 +185,8 @@ async function doSync(onProgress: (msg: string) => void): Promise<SyncResult> {
       const unknown: Email[] = [];
       for (const email of trusted) {
         const card = parseHsbcCardEmail(email.body);
-        if (!card) {
-          unknown.push(email);
-          continue;
-        }
-        if (card.currency !== 'VND') {
-          // A foreign-currency amount cannot be budgeted; the VND amount arrives on the statement.
-          notTx.push(email.id);
-          result.skipped++;
-          continue;
-        }
-        const added = await useStore.getState().addTx({
-          amount: Math.round(card.amount),
-          direction: 'out',
-          note: card.merchant.slice(0, 60) || 'HSBC',
-          source: 'hsbc',
-          credit: true,
-          // Card purchases are tracked against the credit-card plan, not the daily cash bucket.
-          countsDaily: false,
-          extId: email.id,
-          // The email states the day only; the time is when HSBC sent the alert, usually seconds after the swipe.
-          ts: email.ts,
-          date: card.date,
-        });
-        if (added) result.imported++;
-        const known = useStore.getState().creditCard;
-        if (card.balance !== null && card.available !== null && (!known || email.ts > known.asOf)) {
-          useStore.getState().setCreditCard({ last4: card.last4, balance: card.balance, available: card.available, asOf: email.ts });
-        }
+        if (card) cards.push({ email, card });
+        else unknown.push(email);
       }
 
       // Bank mail in another format: only what reads like a transaction goes on to Claude.
@@ -200,6 +227,11 @@ async function doSync(onProgress: (msg: string) => void): Promise<SyncResult> {
         if (added) result.imported++;
       }
       // Emails the model returned nothing for stay unprocessed and are retried next sync.
+    }
+
+    if (cards.length) {
+      onProgress('Đang ghi giao dịch thẻ…');
+      result.imported += await importCardAlerts(cards);
     }
 
     if (notTx.length) {

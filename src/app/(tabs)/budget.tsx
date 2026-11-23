@@ -162,7 +162,7 @@ export default function Budget() {
               <Line
                 key={f.id}
                 name={f.name}
-                sub={f.kind === 'debt' ? 'Trả nợ vay' : f.kind === 'credit' ? 'Dự chi tín dụng mỗi kỳ sao kê' : f.daily ? 'Quỹ chi tiêu hằng ngày' : undefined}
+                sub={f.kind === 'debt' ? 'Trả nợ vay' : f.kind === 'credit' ? 'Dự chi tín dụng mỗi kỳ sao kê' : f.onCard ? 'Trả qua thẻ tín dụng mỗi kỳ' : f.daily ? 'Quỹ chi tiêu hằng ngày' : undefined}
                 amount={f.amount}
                 onPress={() => setFixedSheet({ direction: 'out', item: f })}
               />

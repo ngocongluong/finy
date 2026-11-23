@@ -78,6 +78,7 @@ export interface Line {
   overridden?: boolean;
   kind?: FixedItem['kind'];
   daily?: boolean;
+  onCard?: boolean;
 }
 
 /** Income, spending and what is left over for one month. */
@@ -124,6 +125,8 @@ export interface MonthFlow {
   /** Expenses other than the credit-card plan. */
   expenseLines: Line[];
   creditLine: Line | null;
+  /** Fixed items charged to the card each cycle; included in creditSpent. */
+  onCardLines: Line[];
 }
 
 const total = (list: { amount: number }[]) => list.reduce((s, i) => s + i.amount, 0);
@@ -131,12 +134,15 @@ const total = (list: { amount: number }[]) => list.reduce((s, i) => s + i.amount
 export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthFlow {
   const fixedLine = (f: FixedItem): Line => {
     const amount = fixedAmount(b, f, month);
-    return { source: 'fixed', id: f.id, name: f.name, amount, base: f.amount, overridden: amount !== f.amount, kind: f.kind, daily: f.daily };
+    return { source: 'fixed', id: f.id, name: f.name, amount, base: f.amount, overridden: amount !== f.amount, kind: f.kind, daily: f.daily, onCard: f.onCard };
   };
   const oneOffLine = (o: OneOff): Line => ({ source: 'oneoff', id: o.id, name: o.name, amount: o.amount });
 
   const fixedInLines = b.fixed.filter((f) => f.direction === 'in').map(fixedLine);
-  const fixedOutLines = b.fixed.filter((f) => f.direction === 'out').map(fixedLine);
+  const allOutLines = b.fixed.filter((f) => f.direction === 'out').map(fixedLine);
+  // Charged to the card: part of the cycle's card spending, not a separate expense.
+  const onCardLines = allOutLines.filter((l) => l.onCard && l.kind !== 'credit' && l.kind !== 'debt');
+  const fixedOutLines = allOutLines.filter((l) => !onCardLines.includes(l));
   const mine = b.oneOffs.filter((o) => o.month === month);
   const extraInLines = mine.filter((o) => o.direction === 'in').map(oneOffLine);
   const extraOutLines = mine.filter((o) => o.direction === 'out').map(oneOffLine);
@@ -144,7 +150,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   const creditLine = fixedOutLines.find((l) => l.kind === 'credit') ?? null;
   const creditPlanned = creditLine?.amount ?? 0;
   const cycle = credit ? creditCycle(month, credit.statementDay) : null;
-  const spent = credit && cycle ? creditSpent(credit.txs, cycle) : 0;
+  const spent = (credit && cycle ? creditSpent(credit.txs, cycle) : 0) + total(onCardLines);
   const creditClosed = !!cycle && (credit?.today ?? dateKey()) > cycle.end;
   const creditOver = creditLine ? Math.max(0, spent - creditPlanned) : 0;
   const creditCounted = creditClosed || !creditLine ? spent : Math.max(creditPlanned, spent);
@@ -177,6 +183,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     incomeLines: [...fixedInLines, ...extraInLines],
     expenseLines: [...fixedOutLines.filter((l) => l.kind !== 'credit'), ...extraOutLines],
     creditLine,
+    onCardLines,
   };
 }
 

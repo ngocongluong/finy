@@ -131,6 +131,7 @@ export function FixedSheet({
   const [amount, setAmount] = useState(0);
   const [kind, setKind] = useState<'expense' | 'debt' | 'credit'>('expense');
   const [daily, setDaily] = useState(false);
+  const [onCard, setOnCard] = useState(false);
   const [key, setKey] = useState(0);
 
   useEffect(() => {
@@ -139,6 +140,7 @@ export function FixedSheet({
     setAmount(item?.amount ?? 0);
     setKind(item?.kind ?? initialKind);
     setDaily(!!item?.daily);
+    setOnCard(!!item?.onCard);
     setKey((k) => k + 1);
   }, [visible, item, initialKind]);
 
@@ -155,7 +157,7 @@ export function FixedSheet({
           icon="checkmark"
           disabled={!name.trim() || !(amount > 0)}
           onPress={() => {
-            upsertFixed({ id: item?.id, name, amount, direction, kind: out ? kind : undefined, daily: out && kind === 'expense' && daily });
+            upsertFixed({ id: item?.id, name, amount, direction, kind: out ? kind : undefined, daily: out && kind === 'expense' && daily && !onCard, onCard: out && kind === 'expense' && onCard });
             onClose();
           }}
         />
@@ -174,6 +176,14 @@ export function FixedSheet({
         />
       ) : null}
       {out && kind === 'expense' ? (
+        <Toggle
+          label="Trả qua thẻ tín dụng"
+          hint="Ví dụ trả góp qua thẻ: số này được cộng vào mỗi kỳ sao kê tín dụng (HSBC không gửi email cho khoản này)."
+          value={onCard}
+          onChange={setOnCard}
+        />
+      ) : null}
+      {out && kind === 'expense' && !onCard ? (
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
       ) : null}
       {out && kind === 'credit' ? (

@@ -135,6 +135,16 @@ export const useStore = create<State>((set, get) => ({
   unlock: async () => {
     if (!get().loaded) {
       await db.openDb(await getDbKey());
+      // Once, when foreign-currency card alerts started being imported: import all card mail
+      // again from scratch, so every alert has the balance of the one before it to price from.
+      const reimport = !(await db.kvGet<boolean>('gmailReset2'));
+      if (reimport) {
+        await db.deleteImportedCardTxs();
+        await db.kvSet('gmail_skipped', []);
+        await db.kvSet('cardBalances', {});
+        await db.kvSet('gmailReset1', true);
+        await db.kvSet('gmailReset2', true);
+      }
       const [ui, fixed, oneOffs, overrides, creditCard, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
@@ -178,12 +188,11 @@ export const useStore = create<State>((set, get) => ({
       });
       if (fixed === null || allFixed !== loadedFixed) persist('fixed', allFixed);
       if (!creditMarked) persist('creditMarked', true);
+      // Sync again right after this unlock instead of waiting for the 30-minute spacing.
+      if (reimport) get().setSettings({ lastSyncTs: null });
       // Once: older versions remembered mail from untrusted senders as processed,
       // so it would never be looked at again. Start the Gmail bookkeeping over.
-      if (!(await db.kvGet<boolean>('gmailReset1'))) {
-        await db.kvSet('gmail_skipped', []);
-        await db.kvSet('gmailReset1', true);
-      }
+
       if (oneOffs === null) persist('oneOffs', get().oneOffs);
       if (seeded) persist('accounts', seeded.accounts);
     } else {
@@ -206,7 +215,8 @@ export const useStore = create<State>((set, get) => ({
       amount: Math.max(0, Math.round(item.amount)),
       direction: item.direction,
       kind: out ? (item.kind ?? 'expense') : undefined,
-      daily: out && item.daily && item.kind !== 'credit' && item.kind !== 'debt' ? true : undefined,
+      daily: out && item.daily && !item.onCard && item.kind !== 'credit' && item.kind !== 'debt' ? true : undefined,
+      onCard: out && item.onCard && (item.kind ?? 'expense') === 'expense' ? true : undefined,
     };
     const cur = get().fixed;
     let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];

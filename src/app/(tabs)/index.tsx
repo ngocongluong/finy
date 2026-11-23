@@ -1,11 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, View } from 'react-native';
-import { SpendBars, Sparkline } from '../../components/charts';
-import { TxSheet } from '../../components/sheets';
+import { Sparkline } from '../../components/charts';
 import { Amount, Btn, Card, Empty, IconBtn, Meter, Row, Screen, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, cycleMonthOf, dailySeries, dailyStats, monthFlow, netWorth, type MonthFlow } from '../../lib/finance';
+import { creditCycle, cycleMonthOf, dailyStats, monthFlow, netWorth, type MonthFlow } from '../../lib/finance';
 import { dateKey, fmtDateTime, fmtPct, fmtTime, monthKey, monthLabel } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { project, resolvePlan } from '../../lib/plan';
@@ -27,7 +26,15 @@ function CycleBox({ flow, title, statementDay }: { flow: MonthFlow; title: strin
       accessibilityLabel={`${title}, từ ${sd(cyc.start)} đến ${sd(cyc.end)}. Chạm để xem toàn bộ giao dịch.`}
       style={({ pressed }) => ({ backgroundColor: c.cardAlt, borderRadius: Math.min(r, 14), padding: 12, gap: 8, opacity: pressed ? 0.75 : 1 })}>
       <Row>
-        <Txt v="label" color={c.text}>{title}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Txt v="label" color={c.text}>{title}</Txt>
+          {flow.creditClosed ? (
+            <View style={{ backgroundColor: alpha(c.positive, 0.18), borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Ionicons name="checkmark-circle" size={12} color={c.positive} />
+              <Txt v="small" color={c.positive} style={{ fontWeight: '700' }}>Đã chốt sổ</Txt>
+            </View>
+          ) : null}
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Txt v="small">{sd(cyc.start)} – {sd(cyc.end)}</Txt>
           <Ionicons name="chevron-forward" size={14} color={c.muted} />
@@ -64,7 +71,6 @@ export default function Home() {
   const plan = useStore((s) => s.plan);
   const hide = useStore((s) => s.hideAmounts);
   const toggleHide = useStore((s) => s.toggleHide);
-  const [addOpen, setAddOpen] = useState(false);
 
   const today = dateKey();
   const month = monthKey();
@@ -88,7 +94,6 @@ export default function Home() {
         .sort((a, b) => b.amount - a.amount),
     [sum],
   );
-  const series = useMemo(() => dailySeries(txs, today, 14), [txs, today]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
   const proj = useMemo(() => project(resolvePlan(plan, budget, accounts, month)), [plan, budget, accounts, month]);
   const lastRow = proj.rows[proj.rows.length - 1];
@@ -113,41 +118,7 @@ export default function Home() {
     }
   };
 
-  const over = daily.leftToday < 0;
   const sections: Record<HomeSectionId, React.ReactNode> = {
-    today: (
-      <Card key="today" style={{ gap }}>
-        <Row>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-            <Txt v="label">{over ? 'Hôm nay đã vượt hạn mức' : 'Hôm nay còn tiêu được'}</Txt>
-            <IconBtn name="add-circle" size={24} color={c.accent} onPress={() => setAddOpen(true)} label="Nhập chi tiêu" />
-          </View>
-          <Txt v="small">còn {daily.daysLeft} ngày trong tháng</Txt>
-        </Row>
-        {daily.bucket > 0 ? (
-          <>
-            <Amount v="hero" value={Math.abs(daily.leftToday)} color={over ? c.negative : c.text} />
-            <Meter ratio={daily.allowance > 0 ? daily.spentToday / daily.allowance : daily.spentToday > 0 ? 1 : 0} color={over ? c.negative : c.accent} />
-            <Row>
-              <Txt v="small">Đã tiêu {money(daily.spentToday)}</Txt>
-              <Txt v="small">Hạn mức {money(daily.allowance)}</Txt>
-            </Row>
-          </>
-        ) : (
-          <Txt v="label">Chưa có quỹ chi tiêu hằng ngày. Vào Ngân sách → Cố định, mở một khoản chi và bật “quỹ chi tiêu hằng ngày”.</Txt>
-        )}
-        <View style={{ gap: 6 }}>
-          <Txt v="small">Chi tiêu 14 ngày gần nhất</Txt>
-          <SpendBars data={series} allowance={daily.baseAllowance} />
-        </View>
-        {daily.bucket > 0 ? (
-          <Row>
-            <Txt v="label">Quỹ tháng còn lại</Txt>
-            <Amount value={daily.leftMonth} color={daily.leftMonth < 0 ? c.negative : c.text} />
-          </Row>
-        ) : null}
-      </Card>
-    ),
     credit:
       card.creditLine || card.creditSpent > 0 || (closedCard && closedCard.creditSpent > 0) ? (
         <Card key="credit" style={{ gap: 12 }}>
@@ -155,8 +126,8 @@ export default function Home() {
             <Ionicons name="card" size={18} color={c.accent} />
             <Txt v="heading">Thẻ tín dụng</Txt>
           </View>
-          {closedCard ? <CycleBox flow={closedCard} title="Kỳ trước · đã chốt sổ" statementDay={statementDay} /> : null}
           <CycleBox flow={card} title={closedCard ? 'Kỳ này' : 'Kỳ hiện tại'} statementDay={statementDay} />
+          {closedCard ? <CycleBox flow={closedCard} title="Kỳ trước" statementDay={statementDay} /> : null}
           {creditCard ? (
             <Txt v="small">
               Dư nợ {money(creditCard.balance)} · còn khả dụng {money(creditCard.available)} (HSBC báo lúc {fmtDateTime(creditCard.asOf)})
@@ -292,7 +263,6 @@ export default function Home() {
         </Pressable>
       ) : null}
       {visible.length ? visible : <Empty icon="grid-outline" text="Mọi khối trên trang này đang ẩn. Nhờ Finy bật lại hoặc khôi phục giao diện trong Cài đặt." />}
-      <TxSheet visible={addOpen} onClose={() => setAddOpen(false)} />
     </Screen>
   );
 }

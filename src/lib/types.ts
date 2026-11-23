@@ -12,6 +12,13 @@ export interface FixedItem {
    *   transactions are compared against it. At most one item has this kind.
    */
   kind?: 'expense' | 'debt' | 'credit';
+  /**
+   * Only for ordinary expenses: charged to the credit card every month (an
+   * instalment plan, a subscription the bank sends no email for). Its amount
+   * is added to each statement cycle's card spending instead of being a
+   * separate expense.
+   */
+  onCard?: boolean;
   /** Only for direction "out": the bucket that day-to-day spending is tracked against. */
   daily?: boolean;
 }
@@ -119,7 +126,7 @@ export interface PlanParams {
   goals: PlanGoal[];
 }
 
-export type HomeSectionId = 'today' | 'credit' | 'month' | 'networth' | 'budget' | 'recent' | 'plan' | 'custom';
+export type HomeSectionId = 'credit' | 'month' | 'networth' | 'budget' | 'recent' | 'plan' | 'custom';
 
 export type MetricKey =
   | 'income'

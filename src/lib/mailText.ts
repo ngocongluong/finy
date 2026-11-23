@@ -86,3 +86,40 @@ export const ALLOWED_SENDER_DOMAINS = ['hsbc.com.vn', 'hsbc.com', 'hsbc.com.hk']
 export function looksLikeTransaction(body: string): boolean {
   return /\d[\d.,]*\s*(VND|VNĐ|đ\b)/i.test(body) && /giao dịch|transaction|ghi nợ|ghi có|debit|credit|chuyển khoản|thanh toán|payment/i.test(body);
 }
+
+/** Rough VND per unit, only used when the balance change cannot price a purchase. */
+export const FALLBACK_RATES: Record<string, number> = {
+  USD: 26_500,
+  EUR: 30_500,
+  GBP: 35_500,
+  SGD: 20_500,
+  AUD: 17_500,
+  CAD: 19_000,
+  JPY: 175,
+  KRW: 19,
+  THB: 800,
+  HKD: 3_400,
+};
+
+/**
+ * VND amount of a foreign-currency card purchase. The alert states the
+ * outstanding balance after the purchase, so the change from the previous
+ * alert's balance is what the bank actually booked, as long as nothing else
+ * (a payment, a refund) happened in between: the change must be within 25% of
+ * the amount at the fallback rate, otherwise the fallback rate is used.
+ */
+export function fxToVnd(
+  amount: number,
+  currency: string,
+  previousBalance: number | null,
+  balance: number | null,
+): { amount: number; estimated: boolean } | null {
+  const rate = FALLBACK_RATES[currency.toUpperCase()];
+  if (!rate) return null;
+  const guess = amount * rate;
+  if (previousBalance !== null && balance !== null) {
+    const delta = balance - previousBalance;
+    if (delta > guess * 0.75 && delta < guess * 1.25) return { amount: Math.round(delta), estimated: false };
+  }
+  return { amount: Math.round(guess), estimated: true };
+}

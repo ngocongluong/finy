@@ -139,6 +139,7 @@ function buildTools(log: (action: string) => void) {
         direction: z.enum(['in', 'out']),
         kind: z.enum(['expense', 'debt', 'credit']).optional(),
         daily: z.boolean().optional(),
+        on_card: z.boolean().optional().describe('Ordinary expense charged to the credit card every month (e.g. an instalment plan); it is then added to each statement cycle instead of being a separate expense'),
       }),
       run: (i) => {
         const existing = i.id ? s().fixed.find((f) => f.id === i.id) : undefined;
@@ -150,6 +151,7 @@ function buildTools(log: (action: string) => void) {
           direction: i.direction,
           kind: i.kind ?? existing?.kind,
           daily: i.daily ?? existing?.daily,
+          onCard: i.on_card ?? existing?.onCard,
         });
         log(`${i.id ? 'Đã sửa' : 'Đã thêm'} ${item.direction === 'in' ? 'thu' : 'chi'} cố định "${item.name}": ${fmtVND(item.amount)}/tháng`);
         return `Saved ${JSON.stringify(item)}`;

@@ -47,7 +47,6 @@ export default function MonthDetail() {
   const today = dateKey();
   const cycleOpen = today >= cycle.start && today <= cycle.end;
   const daysToStatement = cycleOpen ? daysBetween(today, cycle.end) : 0;
-  const otherOut = flow.expense - flow.creditCounted;
 
   const openLine = (l: Line) => {
     if (l.source === 'fixed') {
@@ -133,10 +132,26 @@ export default function MonthDetail() {
             <Ionicons name="arrow-up-circle" size={20} color={c.negative} />
             <Txt v="heading">Chi</Txt>
           </View>
-          <Amount value={otherOut} />
+          <Amount value={flow.expense} />
         </Row>
-        {flow.expenseLines.length === 0 ? <Txt v="label">Chưa có khoản chi nào trong tháng này.</Txt> : null}
+        {flow.expenseLines.length === 0 && !flow.creditCounted ? <Txt v="label">Chưa có khoản chi nào trong tháng này.</Txt> : null}
         {flow.expenseLines.map((l) => renderLine(l))}
+        {flow.creditLine || flow.creditCounted > 0 ? (
+          <Pressable
+            onPress={() => router.push(`/credit?month=${month}`)}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 52, justifyContent: 'center' })}>
+            <Row>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Txt numberOfLines={1}>Thẻ tín dụng · kỳ {shortDate(cycle.start)} – {shortDate(cycle.end)}</Txt>
+                <Txt v="small" color={flow.creditOver > 0 ? c.negative : flow.creditClosed ? c.positive : c.muted}>
+                  {flow.creditClosed ? 'Đã chốt sổ · số thực tế' : flow.creditOver > 0 ? 'Đang vượt dự chi' : 'Chưa chốt · theo dự chi'}
+                </Txt>
+              </View>
+              <Amount value={flow.creditCounted} />
+              <Ionicons name="chevron-forward" size={16} color={c.muted} style={{ marginLeft: 6 }} />
+            </Row>
+          </Pressable>
+        ) : null}
         <Btn label="Thêm khoản chi tháng này" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setOneOff({ open: true, item: null, direction: 'out' })} />
       </Card>
 

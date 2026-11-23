@@ -84,6 +84,21 @@ export default function CreditCycleScreen() {
         </Pressable>
       </Card>
 
+      {flow.onCardLines.length ? (
+        <Card style={{ gap: 2 }}>
+          <Txt v="heading" style={{ marginBottom: 4 }}>Trả qua thẻ mỗi kỳ</Txt>
+          {flow.onCardLines.map((l) => (
+            <Row key={l.id} style={{ minHeight: 44 }}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Txt numberOfLines={1}>{l.name}</Txt>
+                <Txt v="small">Khoản cố định · không có email báo</Txt>
+              </View>
+              <Amount value={l.amount} />
+            </Row>
+          ))}
+        </Card>
+      ) : null}
+
       {days.count === 0 ? <Empty icon="card-outline" text="Chưa có giao dịch thẻ nào trong kỳ này." /> : null}
 
       {days.groups.map(([date, list]) => {

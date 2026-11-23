@@ -122,6 +122,11 @@ export async function seenExtIds(): Promise<Set<string>> {
   return new Set([...rows.map((r) => r.ext_id), ...skipped]);
 }
 
+/** Removes every credit-card transaction imported from HSBC mail (so the mail can be imported again). */
+export async function deleteImportedCardTxs(): Promise<void> {
+  await conn().runAsync("DELETE FROM tx WHERE source = 'hsbc' AND credit = 1");
+}
+
 export async function wipeAll(): Promise<void> {
   await conn().execAsync('DELETE FROM kv; DELETE FROM tx;');
 }
