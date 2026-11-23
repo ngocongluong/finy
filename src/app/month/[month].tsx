@@ -6,7 +6,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, periodLabel, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, fixedPeriodAt, monthFlow, type Line } from '../../lib/finance';
+import { creditCycle, fixedPeriodAt, loanDebtNow, monthFlow, projectedCash, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -38,6 +38,16 @@ export default function MonthDetail() {
   const [tx, setTx] = useState<Tx | undefined>(undefined);
 
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
+  // Where things stand at the end of the month: the money expected (as in the table's
+  // "Dự kiến" column), what is still owed on bank loans after this month's payment, and the difference.
+  const cash = useStore((s) => s.cash);
+  const position = useMemo(
+    () => ({
+      money: projectedCash(budget, cash, [month], credit).get(month) ?? null,
+      debt: loanDebtNow(budget.loans, shiftMonth(month, 1)),
+    }),
+    [budget, cash, credit, month],
+  );
   const cycle = useMemo(() => creditCycle(month, statementDay), [month, statementDay]);
   const cycleTxs = useMemo(
     () => txs.filter((t) => t.credit && t.date >= cycle.start && t.date <= cycle.end).sort((a, b) => b.ts - a.ts),
@@ -130,6 +140,48 @@ export default function MonthDetail() {
           </Row>
           <Meter ratio={flow.spendRatio} color={flow.spendRatio > 1 ? c.negative : c.accent} />
         </View>
+      </Card>
+
+      {/* ---- Cuối tháng: tiền dự kiến, nợ, còn lại ---- */}
+      <Card eye={'month.position'} style={{ gap: 10 }}>
+        <Txt v="heading">Cuối {monthLabel(month).toLowerCase()}</Txt>
+        <Row style={{ gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Txt v="label">Tiền dự kiến có</Txt>
+            <Txt v="small">
+              {position.money !== null
+                ? 'tiền đang có + để dành cộng dồn đến hết tháng'
+                : cash
+                  ? `chỉ tính từ ${monthLabel(cash.month).toLowerCase()}, tháng nhập tiền đang có`
+                  : 'nhập Tiền đang có ở Bảng thu chi để xem'}
+            </Txt>
+          </View>
+          {position.money === null ? (
+            <Txt v="heading" color={c.muted}>—</Txt>
+          ) : (
+            <Amount v="heading" value={position.money} color={position.money < 0 ? c.negative : c.positive} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
+          )}
+        </Row>
+        <Row style={{ gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Txt v="label">Còn nợ</Txt>
+            <Txt v="small">{budget.loans?.length ? 'dư nợ vay ngân hàng sau kỳ trả tháng này' : 'chưa có khoản vay ngân hàng'}</Txt>
+          </View>
+          <Amount v="heading" value={position.debt} color={position.debt > 0 ? c.negative : c.text} style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }} />
+        </Row>
+        <View style={{ height: 1, backgroundColor: c.border }} />
+        <Row style={{ gap: 12 }}>
+          <Txt v="label" style={{ flex: 1 }}>Còn lại sau nợ</Txt>
+          {position.money === null ? (
+            <Txt v="heading" color={c.muted}>—</Txt>
+          ) : (
+            <Amount
+              value={position.money - position.debt}
+              color={position.money - position.debt < 0 ? c.negative : c.positive}
+              style={{ flexShrink: 1, maxWidth: '58%', textAlign: 'right' }}
+            />
+          )}
+        </Row>
       </Card>
 
       {/* ---- Thu ---- */}

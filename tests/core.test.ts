@@ -691,3 +691,15 @@ test('paying a loan off: the whole balance in that month, nothing after, later p
   assert.equal(monthFlow(b, '2027-04').expenseLines.length, 0);
   assert.ok(loanTotalInterest(loan) < loanTotalInterest(base) / 50);
 });
+
+test("the end of a month: money expected, and what is still owed after that month's payment", () => {
+  // 0% so every payment is 10tr; income 30tr: 20tr set aside each month.
+  const loan = mkLoan({ principal: 120_000_000, ratePct: 0, months: 12, startMonth: '2026-11' });
+  const b: Budget = { fixed: [{ id: 'i', name: 'Lương', amount: 30_000_000, direction: 'in' }], oneOffs: [], overrides: {}, loans: [loan] };
+  const cash = { amount: 100_000_000, month: '2026-11' };
+  const money = projectedCash(b, cash, ['2027-01']).get('2027-01')!;
+  const debt = loanDebtNow(b.loans, shiftMonth('2027-01', 1));
+  assert.deepEqual([money, debt, money - debt], [160_000_000, 90_000_000, 70_000_000]);
+  // Before the month the money on hand was entered there is nothing to project from.
+  assert.equal(projectedCash(b, cash, ['2026-10']).get('2026-10'), null);
+});
