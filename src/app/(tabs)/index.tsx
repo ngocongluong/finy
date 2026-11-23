@@ -87,12 +87,17 @@ export default function Home() {
   // This month's expenses, largest first, at the amounts that apply this month.
   const outs = useMemo(
     () =>
-      [...sum.expenseLines, ...(sum.creditLine ? [sum.creditLine] : [])]
+      [
+        ...sum.expenseLines,
+        // The card at what was actually spent in the cycle that closes this month, not the planned amount.
+        ...(sum.creditLine || sum.creditSpent > 0
+          ? [{ id: 'credit-actual', name: `Thẻ tín dụng · thực chi${sum.creditClosed ? '' : ' (đến nay)'}`, amount: sum.creditSpent }]
+          : []),
+      ]
         .filter((i) => i.amount > 0)
         .sort((a, b) => b.amount - a.amount),
     [sum],
   );
-  const total = useMemo(() => netWorth(accounts), [accounts]);
   const proj = useMemo(() => project(resolvePlan(plan, budget, accounts, month)), [plan, budget, accounts, month]);
   const lastRow = proj.rows[proj.rows.length - 1];
 
@@ -108,7 +113,7 @@ export default function Home() {
       case 'creditPlanned': return money(card.creditPlanned);
       case 'spendRatio': return secret(fmtPct(sum.spendRatio));
       case 'savingRate': return secret(fmtPct(sum.savingRate));
-      case 'netWorth': return money(total);
+      case 'netWorth': return money(netWorth(accounts));
       case 'dailyAllowance': return money(daily.allowance);
       case 'spentToday': return money(daily.spentToday);
       case 'spentMonth': return money(daily.spentMonth);
@@ -149,13 +154,6 @@ export default function Home() {
           </Row>
           <Meter ratio={sum.spendRatio} color={sum.spendRatio > 1 ? c.negative : c.accent} />
         </View>
-      </Card>
-    ),
-    networth: (
-      <Card eye={'home.networth'} key="networth" style={{ gap: 6 }} onPress={() => router.navigate('/budget')}>
-        <Txt v="label">Tổng tiền hiện có</Txt>
-        <Amount v="hero" value={total} color={total < 0 ? c.negative : c.text} />
-        <Txt v="small">{accounts.length ? `${accounts.length} tài khoản — chạm để cập nhật` : 'Chưa có tài khoản nào — chạm để thêm'}</Txt>
       </Card>
     ),
     budget: (

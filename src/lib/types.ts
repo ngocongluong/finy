@@ -138,7 +138,7 @@ export interface PlanParams {
   goals: PlanGoal[];
 }
 
-export type HomeSectionId = 'credit' | 'month' | 'networth' | 'budget' | 'recent' | 'plan' | 'custom';
+export type HomeSectionId = 'credit' | 'month' | 'budget' | 'recent' | 'plan' | 'custom';
 
 export type MetricKey =
   | 'income'

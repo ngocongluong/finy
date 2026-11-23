@@ -8,7 +8,7 @@ App dành cho **một người dùng**: không có máy chủ, không có tài k
 
 | Tab | Làm được gì |
 |---|---|
-| **Tổng quan** | Thẻ tín dụng (kỳ này, và từ ngày 15 thêm kỳ trước đã chốt sổ), tóm tắt tháng (Thu, Chi, Để dành được, Chi/Thu), tổng tiền hiện có, dự phóng dài hạn. Nút con mắt để hiện số tiền. |
+| **Tổng quan** | Thẻ tín dụng (kỳ này, và từ ngày 15 thêm kỳ trước đã chốt sổ), tóm tắt tháng (Thu, Chi, Để dành được, Chi/Thu), khoản chi lớn nhất (thẻ tín dụng tính theo thực chi), giao dịch gần đây, dự phóng dài hạn. Nút con mắt để hiện số tiền. |
 | **Ngân sách** | Nhập nguồn thu cố định và khoản chi cố định hàng tháng; Finy lập bảng thu / chi / để dành cho 6, 12 hoặc 24 tháng tới. Chạm một tháng để mở chi tiết: mục **Thu** và mục **Chi** tách riêng, sửa được từng dòng cho riêng tháng đó, thêm khoản phát sinh, và phần **Chi tín dụng** của kỳ sao kê. Kèm danh sách tài khoản tạo nên tổng tiền hiện có. |
 | **Giao dịch** | Nhập chi tiêu hằng ngày; đồng bộ giao dịch thẻ tín dụng HSBC từ Gmail (tự chạy mỗi lần mở app). |
 | **Kế hoạch** | Dự phóng tài sản ròng 5–10 năm theo 3 kịch bản, khoản vay, các khoản chi lớn, bảng từng năm. |

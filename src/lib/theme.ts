@@ -6,7 +6,6 @@ import type { CustomCard, HomeSectionId, MetricKey, UiColors, UiConfig } from '.
 export const HOME_SECTIONS: { id: HomeSectionId; label: string }[] = [
   { id: 'credit', label: 'Thẻ tín dụng kỳ này' },
   { id: 'month', label: 'Tháng này' },
-  { id: 'networth', label: 'Tổng tiền hiện có' },
   { id: 'budget', label: 'Các khoản chi lớn nhất' },
   { id: 'recent', label: 'Giao dịch gần đây' },
   { id: 'plan', label: 'Kế hoạch dài hạn' },
@@ -137,7 +136,7 @@ export function applyUiPatch(current: UiConfig, patch: UiPatch): { ui: UiConfig 
   let home = current.home;
   if (patch.home) {
     // Sections that were removed from the app (e.g. the old daily-allowance card) are dropped quietly.
-    const REMOVED = ['today'];
+    const REMOVED = ['today', 'networth'];
     const wanted = patch.home.filter((h) => !REMOVED.includes(h.id as string));
     const seen = new Set<HomeSectionId>();
     const next: UiConfig['home'] = [];
