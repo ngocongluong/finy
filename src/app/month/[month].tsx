@@ -55,7 +55,8 @@ export default function MonthDetail() {
       const item = budget.fixed.find((f) => f.id === l.id);
       if (item) setFixedEdit({ open: true, item });
     } else if (l.source === 'loan') {
-      const item = (budget.loans ?? []).find((x) => x.id === l.id);
+      // A prepayment line carries the loan's id with a suffix.
+      const item = (budget.loans ?? []).find((x) => x.id === l.id.split('#')[0]);
       if (item) setLoanEdit({ open: true, item });
     } else {
       const item = budget.oneOffs.find((o) => o.id === l.id);
@@ -75,7 +76,9 @@ export default function MonthDetail() {
             {l.source === 'oneoff'
               ? 'Phát sinh'
               : l.source === 'loan'
-                ? 'Vay ngân hàng · trả góp đều'
+                ? l.id.endsWith('#prepay')
+                  ? 'Trả trước khoản vay · đầu giai đoạn mới'
+                  : 'Vay ngân hàng · trả góp đều'
               : l.overridden
                 ? `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`
                 : l.kind === 'debt'

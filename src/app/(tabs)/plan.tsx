@@ -132,7 +132,8 @@ export default function Plan() {
   const targets = [1e9, 2e9, 5e9, 1e10, 2e10, 5e10, 1e11].filter((t) => t > inputs.startNetWorth).slice(0, 2);
   const editing = FIELDS.find((f) => f.key === field);
 
-  const saveDebts = (next: PlanDebt[]) => setPlan({ debts: next });
+  // A loan's schedule is derived data: never stored with the plan's own list.
+  const saveDebts = (next: PlanDebt[]) => setPlan({ debts: next.map(({ schedule: _schedule, ...d }) => d) });
 
   return (
     <Screen title="Kế hoạch dài hạn">

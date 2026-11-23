@@ -3,7 +3,7 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
-import { markCreditItem, migrateLegacyBudget } from './finance';
+import { markCreditItem, migrateLegacyBudget, normalizeLoan } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
@@ -197,7 +197,8 @@ export const useStore = create<State>((set, get) => ({
         overrides: overrides ?? {},
         creditCard: creditCard ?? null,
         instalments: instalments ?? [],
-        loans: loans ?? [],
+        // Loans saved by older versions had one rate on the loan itself: convert to periods.
+        loans: (loans ?? []).map(normalizeLoan),
         cash: cash ?? null,
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
@@ -302,15 +303,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   upsertLoan: (l) => {
-    const full: Loan = {
-      id: l.id ?? uid(),
-      name: l.name.trim(),
-      principal: Math.max(0, Math.round(l.principal)),
-      ratePct: Math.min(100, Math.max(0, l.ratePct)),
-      months: Math.min(600, Math.max(1, Math.round(l.months))),
-      startMonth: l.startMonth,
-      paymentOverride: l.paymentOverride && l.paymentOverride > 0 ? Math.round(l.paymentOverride) : null,
-    };
+    const full: Loan = normalizeLoan({ ...l, id: l.id ?? uid(), name: l.name.trim() });
     const cur = get().loans;
     const loans = cur.some((x) => x.id === full.id) ? cur.map((x) => (x.id === full.id ? full : x)) : [...cur, full];
     set({ loans });

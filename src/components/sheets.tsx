@@ -1,7 +1,8 @@
 // Add / edit forms, shared by several screens.
 import React, { useEffect, useState } from 'react';
-import { Alert, Switch, View } from 'react-native';
-import { annuityPayment, instalmentAmount, loanBalance, loanPaidBefore, loanPayment, loanTotalInterest } from '../lib/finance';
+import { Ionicons } from '@expo/vector-icons';
+import { Alert, Pressable, Switch, Text, View } from 'react-native';
+import { instalmentAmount, loanBalance, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeLoan } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
 import type { Account, AccountKind, FixedItem, Instalment, Loan, OneOff, Tx } from '../lib/types';
@@ -646,12 +647,110 @@ export function InstalmentSheet({
 }
 
 const LOAN_YEARS = [5, 10, 15, 20, 25, 30, 35];
+const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+const monthYear = (m: string) => `T${Number(m.slice(5, 7))}/${m.slice(0, 4)}`;
 
 /**
- * Add or edit a bank loan. The monthly payment is calculated from amount,
- * rate and term (equal payments of principal + interest) and follows every
- * change; the bank's own figure can be entered when it differs, and is
- * dropped as soon as amount, rate or term change.
+ * Picks a month by tapping: shows the month, and opens a year switcher with
+ * the twelve months underneath. Months outside [min, max] cannot be picked.
+ */
+export function MonthField({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  label: string;
+  value: string;
+  onChange: (month: string) => void;
+  min?: string;
+  max?: string;
+}) {
+  const { c, r, fs } = useUi();
+  const [open, setOpen] = useState(false);
+  const [year, setYear] = useState(Number(value.slice(0, 4)));
+  return (
+    <View style={{ flex: 1, gap: 6 }}>
+      <Pressable
+        onPress={() => {
+          setYear(Number(value.slice(0, 4)));
+          setOpen((o) => !o);
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${monthYear(value)}. Chạm để chọn tháng.`}
+        style={({ pressed }) => ({
+          backgroundColor: c.card,
+          borderRadius: Math.min(r, 12),
+          borderWidth: 1,
+          borderColor: open ? c.accent : c.border,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          opacity: pressed ? 0.7 : 1,
+        })}>
+        <Txt v="small">{label}</Txt>
+        <Row>
+          <Text style={{ color: c.text, fontSize: fs(16), fontWeight: '700' }}>{monthYear(value)}</Text>
+          <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color={c.muted} />
+        </Row>
+      </Pressable>
+      {open ? (
+        <View style={{ backgroundColor: c.card, borderRadius: Math.min(r, 12), borderWidth: 1, borderColor: c.border, padding: 6, gap: 6 }}>
+          <Row>
+            <IconBtn name="chevron-back" size={18} onPress={() => setYear(year - 1)} label="Năm trước" />
+            <Txt v="heading">{year}</Txt>
+            <IconBtn name="chevron-forward" size={18} onPress={() => setYear(year + 1)} label="Năm sau" />
+          </Row>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 6 }}>
+            {Array.from({ length: 12 }, (_, i) => {
+              const m = `${year}-${pad2(i + 1)}`;
+              const disabled = (min !== undefined && m < min) || (max !== undefined && m > max);
+              const active = m === value;
+              return (
+                <Pressable
+                  key={m}
+                  disabled={disabled}
+                  onPress={() => {
+                    onChange(m);
+                    setOpen(false);
+                  }}
+                  accessibilityLabel={`Tháng ${i + 1} năm ${year}`}
+                  style={{
+                    width: '31%',
+                    minHeight: 36,
+                    borderRadius: 8,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: active ? c.accent : c.cardAlt,
+                    opacity: disabled ? 0.3 : 1,
+                  }}>
+                  <Text style={{ color: active ? c.onAccent : c.text, fontSize: fs(13), fontWeight: '600' }}>T{i + 1}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+interface DraftPeriod {
+  key: number;
+  from: string;
+  rateText: string;
+  prepayment: number;
+  override: number | null;
+  useOverride: boolean;
+}
+
+/**
+ * Add or edit a bank loan. The loan is split into periods, each with its own
+ * months (picked by tapping), rate and, after the first, a prepayment at its
+ * start, entered as the amount still borrowed for that period. The monthly
+ * payment of every period is recalculated from the balance owed, the rate and
+ * the months left, and follows every change; the bank's own figure can be
+ * entered per period and is dropped when that period's terms change.
  */
 export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClose: () => void; item?: Loan | null }) {
   const { c } = useUi();
@@ -660,55 +759,98 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
   const remove = useStore((s) => s.deleteLoan);
   const [name, setName] = useState('');
   const [principal, setPrincipal] = useState(0);
-  const [rateText, setRateText] = useState('');
   const [months, setMonths] = useState(360);
   const [monthsText, setMonthsText] = useState('360');
   const [start, setStart] = useState(monthKey());
-  const [override, setOverride] = useState<number | null>(null);
-  const [useOverride, setUseOverride] = useState(false);
+  const [periods, setPeriods] = useState<DraftPeriod[]>([]);
   const [key, setKey] = useState(0);
-  const [overrideKey, setOverrideKey] = useState(0);
   const [note, setNote] = useState<string | null>(null);
+  const nextKey = React.useRef(0);
 
   useEffect(() => {
     if (!visible) return;
-    setName(item?.name ?? '');
-    setPrincipal(item?.principal ?? 0);
-    setRateText(item ? String(item.ratePct).replace('.', ',') : '');
-    setMonths(item?.months ?? 360);
-    setMonthsText(String(item?.months ?? 360));
-    setStart(item?.startMonth ?? monthKey());
-    setOverride(item?.paymentOverride ?? null);
-    setUseOverride(item?.paymentOverride != null);
+    const l = item ? normalizeLoan(item) : null;
+    setName(l?.name ?? '');
+    setPrincipal(l?.principal ?? 0);
+    setMonths(l?.months ?? 360);
+    setMonthsText(String(l?.months ?? 360));
+    setStart(l?.startMonth ?? monthKey());
+    setPeriods(
+      (l?.periods ?? [{ from: monthKey(), ratePct: NaN, prepayment: 0, paymentOverride: null }]).map((p) => ({
+        key: nextKey.current++,
+        from: p.from,
+        rateText: Number.isFinite(p.ratePct) ? String(p.ratePct).replace('.', ',') : '',
+        prepayment: p.prepayment,
+        override: p.paymentOverride,
+        useOverride: p.paymentOverride !== null,
+      })),
+    );
     setNote(null);
     setKey((k) => k + 1);
-    setOverrideKey((k) => k + 1);
   }, [visible, item]);
 
-  const ratePct = parseFloat(rateText.replace(',', '.'));
-  // Changing amount, rate or term means a new calculation: the bank's old figure no longer applies.
-  const termsChanged = () => {
-    if (useOverride) {
-      setUseOverride(false);
-      setOverride(null);
-      setNote('Đã bỏ số trả theo ngân hàng vì thông tin khoản vay thay đổi.');
-    }
-  };
-
-  const valid = name.trim() && principal > 0 && Number.isFinite(ratePct) && ratePct >= 0 && months >= 1;
-  const draft: Loan = {
-    id: item?.id ?? '',
+  const end = shiftMonth(start, months - 1);
+  const rateOf = (p: DraftPeriod) => parseFloat(p.rateText.replace(',', '.'));
+  const draft: Loan = normalizeLoan({
+    id: item?.id ?? 'draft',
     name,
     principal,
-    ratePct: Number.isFinite(ratePct) ? ratePct : 0,
     months,
     startMonth: start,
-    paymentOverride: useOverride && override ? override : null,
+    periods: periods.map((p, i) => ({
+      from: i === 0 ? start : p.from,
+      ratePct: Number.isFinite(rateOf(p)) ? rateOf(p) : 0,
+      prepayment: i === 0 ? 0 : p.prepayment,
+      paymentOverride: p.useOverride && p.override ? p.override : null,
+    })),
+  });
+  const valid = name.trim().length > 0 && principal > 0 && months >= 1 && periods.length > 0 && periods.every((p) => Number.isFinite(rateOf(p)) && rateOf(p) >= 0);
+  const summary = valid ? loanPeriods(draft) : [];
+  const now = monthKey();
+  const paid = loanPaidBefore(draft, now);
+
+  // Changing what a period repays or its rate means a new calculation: the bank's
+  // old figure for that period and every later one no longer applies.
+  const termsChangedFrom = (index: number) => {
+    // Decided from the periods as they are now; the update itself is applied by React later.
+    if (!periods.some((p, i) => i >= index && p.useOverride)) return;
+    setPeriods((cur) => cur.map((p, i) => (i < index || !p.useOverride ? p : { ...p, useOverride: false, override: null })));
+    setNote('Đã bỏ số trả theo ngân hàng của giai đoạn bị thay đổi.');
   };
-  const calculated = valid ? annuityPayment(principal, draft.ratePct, months) : 0;
-  const payment = valid ? loanPayment(draft) : 0;
-  const paid = loanPaidBefore(draft, monthKey());
-  const end = shiftMonth(start, months - 1);
+  const update = (k: number, patch: Partial<DraftPeriod>) => setPeriods((cur) => cur.map((p) => (p.key === k ? { ...p, ...patch } : p)));
+
+  // Keeps every later period inside the term after the start or the term changed.
+  const clamp = (list: DraftPeriod[], s0: string, e0: string) => {
+    const out = list.filter((p, i) => i === 0 || (p.from > s0 && p.from <= e0));
+    return out.length ? out : list.slice(0, 1);
+  };
+  const changeStart = (m: string) => {
+    setStart(m);
+    setPeriods((cur) => clamp(cur, m, shiftMonth(m, months - 1)));
+    termsChangedFrom(0);
+  };
+  const changeMonths = (n: number) => {
+    setMonths(n);
+    setMonthsText(String(n));
+    setPeriods((cur) => clamp(cur, start, shiftMonth(start, n - 1)));
+    termsChangedFrom(0);
+  };
+  const monthsBetweenKeys = (a: string, b: string) => {
+    const [y1, m1] = a.split('-').map(Number);
+    const [y2, m2] = b.split('-').map(Number);
+    return (y2 - y1) * 12 + (m2 - m1);
+  };
+
+  const addPeriod = () => {
+    const last = periods[periods.length - 1];
+    const lastFrom = periods.length === 1 ? start : last.from;
+    // A year after the last period starts, but never before next month and never past the end.
+    let from = shiftMonth(lastFrom, 12);
+    if (from <= now) from = shiftMonth(now, 1);
+    if (from <= lastFrom) from = shiftMonth(lastFrom, 1);
+    if (from > end) return;
+    setPeriods((cur) => [...cur, { key: nextKey.current++, from, rateText: last.rateText, prepayment: 0, override: null, useOverride: false }]);
+  };
 
   return (
     <Sheet
@@ -721,44 +863,17 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
           icon="checkmark"
           disabled={!valid}
           onPress={() => {
-            upsert({ id: item?.id, name, principal, ratePct: draft.ratePct, months, startMonth: start, paymentOverride: draft.paymentOverride });
+            upsert({ id: item?.id, name, principal, months, startMonth: start, periods: draft.periods });
             onClose();
           }}
         />
       }>
       <Field label="Tên khoản vay" value={name} onChangeText={setName} placeholder="Vay mua nhà, vay mua xe…" autoFocus={!item} />
-      <AmountField
-        key={`p${key}`}
-        label="Số tiền vay"
-        value={principal}
-        onChange={(n) => {
-          setPrincipal(n);
-          termsChanged();
-        }}
-      />
-      <Field
-        label="Lãi suất (%/năm)"
-        value={rateText}
-        placeholder="6"
-        onChangeText={(t) => {
-          setRateText(t.replace(/[^0-9.,]/g, ''));
-          termsChanged();
-        }}
-      />
       <View style={{ gap: 8 }}>
         <Txt v="label">Thời hạn vay</Txt>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {LOAN_YEARS.map((y) => (
-            <Chip
-              key={y}
-              label={`${y} năm`}
-              active={months === y * 12}
-              onPress={() => {
-                setMonths(y * 12);
-                setMonthsText(String(y * 12));
-                termsChanged();
-              }}
-            />
+            <Chip key={y} label={`${y} năm`} active={months === y * 12} onPress={() => changeMonths(y * 12)} />
           ))}
         </View>
         <Field
@@ -768,63 +883,169 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
             const digits = t.replace(/\D/g, '').slice(0, 3);
             setMonthsText(digits);
             const n = parseInt(digits, 10);
-            if (n >= 1 && n <= 600) {
-              setMonths(n);
-              termsChanged();
-            }
+            if (n >= 1 && n <= 600) changeMonths(n);
           }}
         />
+        <Txt v="small">
+          Từ {monthYear(start)} đến {monthYear(end)} · {months} kỳ trả
+        </Txt>
       </View>
-      <View style={{ gap: 6 }}>
-        <Txt v="label">Tháng trả kỳ đầu tiên</Txt>
-        <Row>
-          <IconBtn name="play-back" onPress={() => setStart(shiftMonth(start, -12))} label="Lùi 1 năm" />
-          <IconBtn name="chevron-back" onPress={() => setStart(shiftMonth(start, -1))} label="Lùi 1 tháng" />
-          <Txt v="heading">{monthLabel(start)}</Txt>
-          <IconBtn name="chevron-forward" onPress={() => setStart(shiftMonth(start, 1))} label="Tới 1 tháng" />
-          <IconBtn name="play-forward" onPress={() => setStart(shiftMonth(start, 12))} label="Tới 1 năm" />
-        </Row>
-      </View>
+
+      {periods.map((p, i) => {
+        const last = i === periods.length - 1;
+        const from = i === 0 ? start : p.from;
+        const to = last ? end : shiftMonth(periods[i + 1].from, -1);
+        const sum = summary[i];
+        const nextFrom = periods[i + 2]?.from;
+        return (
+          <View key={p.key} style={{ gap: 10, backgroundColor: c.cardAlt, borderRadius: 12, padding: 12 }}>
+            <Row>
+              <Txt v="heading">Giai đoạn {i + 1}</Txt>
+              {i > 0 ? (
+                <IconBtn
+                  name="trash-outline"
+                  size={18}
+                  color={c.negative}
+                  label={`Xoá giai đoạn ${i + 1}`}
+                  onPress={() => {
+                    setPeriods((cur) => cur.filter((x) => x.key !== p.key));
+                    termsChangedFrom(i);
+                  }}
+                />
+              ) : null}
+            </Row>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+              <MonthField
+                label="Từ tháng"
+                value={from}
+                // The first period starts with the first payment; later ones between their neighbours.
+                min={i === 0 ? undefined : shiftMonth(i === 1 ? start : periods[i - 1].from, 1)}
+                max={i === 0 ? undefined : last ? end : shiftMonth(periods[i + 1].from, -1)}
+                onChange={(m) => {
+                  if (i === 0) changeStart(m);
+                  else {
+                    // Moving where this period starts changes what it starts from.
+                    update(p.key, { from: m });
+                    termsChangedFrom(i);
+                  }
+                }}
+              />
+              <MonthField
+                label="Đến tháng"
+                value={to}
+                min={from}
+                // The last period's end is the end of the loan; otherwise the next period moves with it.
+                max={last ? shiftMonth(start, 599) : shiftMonth(nextFrom ?? shiftMonth(end, 1), -2)}
+                onChange={(m) => {
+                  if (last) changeMonths(monthsBetweenKeys(start, m) + 1);
+                  else {
+                    // The next period starts the month after; what it starts from changes.
+                    update(periods[i + 1].key, { from: shiftMonth(m, 1) });
+                    termsChangedFrom(i + 1);
+                  }
+                }}
+              />
+            </View>
+            {i === 0 ? (
+              <AmountField
+                key={`p${key}`}
+                label="Số tiền vay"
+                value={principal}
+                onChange={(n) => {
+                  setPrincipal(n);
+                  termsChangedFrom(0);
+                }}
+              />
+            ) : sum ? (
+              <>
+                <Row>
+                  <Txt v="small">Dư nợ còn lại khi bắt đầu</Txt>
+                  <Txt v="small">{money(sum.carried)}</Txt>
+                </Row>
+                <AmountField
+                  key={`p${key}-${p.key}-${sum.carried}`}
+                  label="Số tiền vay giai đoạn này (sau khi trả trước)"
+                  value={sum.carried - p.prepayment}
+                  onChange={(n) => {
+                    update(p.key, { prepayment: Math.max(0, sum.carried - n) });
+                    termsChangedFrom(i);
+                  }}
+                />
+                {p.prepayment > 0 ? (
+                  <Txt v="small" color={c.accent}>
+                    Trả trước {money(Math.min(p.prepayment, sum.carried))} vào {monthYear(from)}: tính là tiền chi ra trong tháng đó.
+                  </Txt>
+                ) : (
+                  <Txt v="small">Không trả trước. Nhập số nhỏ hơn dư nợ còn lại nếu bạn trả trước một phần.</Txt>
+                )}
+              </>
+            ) : null}
+            <Field
+              label="Lãi suất (%/năm)"
+              value={p.rateText}
+              placeholder={i === 0 ? '6' : 'Lãi thả nổi dự kiến'}
+              onChangeText={(t) => {
+                update(p.key, { rateText: t.replace(/[^0-9.,]/g, '') });
+                termsChangedFrom(i);
+              }}
+            />
+            {sum ? (
+              <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
+                <Row>
+                  <Txt v="label">Trả mỗi tháng</Txt>
+                  <Txt v="title">{money(sum.payment)}</Txt>
+                </Row>
+                <Txt v="small">
+                  {p.useOverride && p.override
+                    ? `Theo ngân hàng. Tính theo trả góp đều: ${money(sum.calculated)}.`
+                    : `Gốc + lãi chia đều trên ${monthsBetweenKeys(from, end) + 1} tháng còn lại.`}
+                </Txt>
+              </View>
+            ) : null}
+            <Toggle
+              label="Ngân hàng tính số trả khác"
+              hint="Bật nếu số trả thực tế của giai đoạn này khác số tính ở trên."
+              value={p.useOverride}
+              onChange={(v) => {
+                update(p.key, { useOverride: v, override: v ? p.override ?? sum?.calculated ?? null : p.override });
+                setNote(null);
+              }}
+            />
+            {p.useOverride ? (
+              <AmountField
+                key={`o${key}-${p.key}`}
+                label="Số trả mỗi tháng theo ngân hàng"
+                value={p.override ?? sum?.calculated ?? 0}
+                onChange={(n) => update(p.key, { override: n || null })}
+              />
+            ) : null}
+          </View>
+        );
+      })}
+
+      <Btn label="Thêm giai đoạn (đổi lãi suất, trả trước)" icon="add" kind="ghost" onPress={addPeriod} disabled={!valid} />
+      {note ? <Txt v="small" color={c.warning}>{note}</Txt> : null}
 
       {valid ? (
         <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 6 }}>
           <Row>
-            <Txt v="label">Trả mỗi tháng</Txt>
-            <Txt v="title">{money(payment)}</Txt>
-          </Row>
-          {useOverride && override ? <Txt v="small">Theo ngân hàng. Tính theo trả góp đều: {money(calculated)}.</Txt> : <Txt v="small">Gốc + lãi chia đều mỗi tháng.</Txt>}
-          <Row>
             <Txt v="small">Tổng lãi cả khoản vay</Txt>
             <Txt v="small">{money(loanTotalInterest(draft))}</Txt>
           </Row>
-          <Row>
-            <Txt v="small">Kỳ cuối</Txt>
-            <Txt v="small">{monthLabel(end)}</Txt>
-          </Row>
-          {paid > 0 ? (
+          {paid > 0 && paid < months ? (
             <Row>
-              <Txt v="small">Đã trả {Math.min(paid, months)}/{months} kỳ · dư nợ còn</Txt>
+              <Txt v="small">
+                Đã trả {paid}/{months} kỳ · dư nợ hiện tại
+              </Txt>
               <Txt v="small">{money(loanBalance(draft, paid))}</Txt>
             </Row>
           ) : null}
+          <Row>
+            <Txt v="small">Kỳ cuối</Txt>
+            <Txt v="small">{monthYear(end)}</Txt>
+          </Row>
         </View>
       ) : null}
-
-      <Toggle
-        label="Ngân hàng tính số trả khác"
-        hint="Bật nếu số trả thực tế khác số tính ở trên (ngân hàng tính lãi theo ngày, có phí, bảo hiểm…)."
-        value={useOverride}
-        onChange={(v) => {
-          setUseOverride(v);
-          setNote(null);
-          if (v && !override) {
-            setOverride(calculated || null);
-            setOverrideKey((k) => k + 1);
-          }
-        }}
-      />
-      {useOverride ? <AmountField key={`o${overrideKey}`} label="Số trả mỗi tháng theo ngân hàng" value={override ?? 0} onChange={(n) => setOverride(n || null)} /> : null}
-      {note ? <Txt v="small" color={c.warning}>{note}</Txt> : null}
 
       {item ? (
         <Btn

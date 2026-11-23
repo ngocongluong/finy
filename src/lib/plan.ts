@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { loanBalance, loanDebtNow, loanPaidBefore, loanPayment, monthFlow, netWorth, type Budget } from './finance';
+import { loanBalance, loanDebtNow, loanMonth, loanPaidBefore, loanPeriodAt, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -47,6 +47,7 @@ export function resolvePlan(
 ): PlanInputs {
   const { fixed, oneOffs, overrides } = budget;
   const base = monthFlow({ fixed, oneOffs: [], overrides: {} }, currentMonth);
+  const years = Math.min(10, Math.max(5, Math.round(plan.years)));
   const fixedDebts: PlanDebt[] = fixed
     .filter((f) => f.direction === 'out' && f.kind === 'debt' && f.amount > 0)
     .map((f): PlanDebt => ({ id: f.id, name: f.name, balance: null, ratePct: 0, monthlyPayment: f.amount }))
@@ -54,9 +55,23 @@ export function resolvePlan(
     .concat(
       (budget.loans ?? [])
         .filter((l) => loanPaidBefore(l, currentMonth) < l.months)
-        .map((l) => ({ id: l.id, name: l.name, balance: loanBalance(l, loanPaidBefore(l, currentMonth)), ratePct: l.ratePct, monthlyPayment: loanPayment(l) })),
+        .map(
+          (l): PlanDebt => ({
+            id: l.id,
+            name: l.name,
+            balance: loanBalance(l, loanPaidBefore(l, currentMonth)),
+            ratePct: loanPeriodAt(l, currentMonth).ratePct,
+            monthlyPayment: loanMonth(l, currentMonth)?.payment ?? loanMonth(l, l.startMonth)?.payment ?? 0,
+            // Month by month from now: later periods (new rate, prepayment) are followed exactly.
+            schedule: Array.from({ length: years * 12 }, (_, i) => {
+              const m = shiftMonth(currentMonth, i);
+              const e = loanMonth(l, m);
+              if (e) return { payment: e.payment + e.prepayment, balance: e.closing };
+              return { payment: 0, balance: m < l.startMonth ? l.principal : 0 };
+            }),
+          }),
+        ),
     );
-  const years = Math.min(10, Math.max(5, Math.round(plan.years)));
 
   const extraByMonth: Record<number, number> = {};
   const lastMonth = shiftMonth(currentMonth, years * 12 - 1);
@@ -147,6 +162,12 @@ export function project(inp: PlanInputs): Projection {
 
     let debtPaid = 0;
     for (const d of debts) {
+      if (d.schedule) {
+        const e = d.schedule[m - 1];
+        debtPaid += e?.payment ?? 0;
+        d.balance = e ? e.balance : 0;
+        continue;
+      }
       if (d.balance === null) {
         debtPaid += d.monthlyPayment; // unknown balance: a payment that never ends
         continue;

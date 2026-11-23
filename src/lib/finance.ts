@@ -1,7 +1,7 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, FixedItem, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
@@ -14,7 +14,7 @@ export interface Budget {
   loans?: Loan[];
 }
 
-// ---- bank loans (annuity) ----
+// ---- bank loans (annuity, in periods) ----
 
 /** Monthly payment that repays `principal` over `months` at `ratePct` a year, interest charged monthly on the balance. */
 export function annuityPayment(principal: number, ratePct: number, months: number): number {
@@ -24,24 +24,117 @@ export function annuityPayment(principal: number, ratePct: number, months: numbe
   return Math.round((principal * r) / (1 - Math.pow(1 + r, -n)));
 }
 
-/** The calculated payment, or the bank's own figure when one was entered. */
-export function loanPayment(l: Loan): number {
-  return l.paymentOverride ?? annuityPayment(l.principal, l.ratePct, l.months);
+/** The month of the last payment. */
+export function loanEndMonth(l: Pick<Loan, 'startMonth' | 'months'>): string {
+  return shiftMonth(l.startMonth, Math.max(1, l.months) - 1);
+}
+
+/**
+ * Brings a stored loan into shape: older app versions kept one rate and one
+ * bank figure on the loan itself; periods are sorted, the first starts with the
+ * first payment, and periods outside the term or on the same month are dropped.
+ */
+export function normalizeLoan(raw: unknown): Loan {
+  const r = raw as Partial<Loan> & { ratePct?: number; paymentOverride?: number | null };
+  const startMonth = r.startMonth ?? '1970-01';
+  const months = Math.min(600, Math.max(1, Math.round(r.months ?? 1)));
+  const end = shiftMonth(startMonth, months - 1);
+  const given: LoanPeriod[] = r.periods?.length
+    ? r.periods
+    : [{ from: startMonth, ratePct: r.ratePct ?? 0, prepayment: 0, paymentOverride: r.paymentOverride ?? null }];
+  const sorted = [...given].sort((a, b) => a.from.localeCompare(b.from));
+  const periods: LoanPeriod[] = [];
+  for (const p of sorted) {
+    const first = periods.length === 0;
+    if (!first && (p.from <= startMonth || p.from > end || p.from === periods[periods.length - 1].from)) continue;
+    periods.push({
+      from: first ? startMonth : p.from,
+      ratePct: Math.min(100, Math.max(0, Number(p.ratePct) || 0)),
+      prepayment: first ? 0 : Math.max(0, Math.round(Number(p.prepayment) || 0)),
+      paymentOverride: p.paymentOverride && p.paymentOverride > 0 ? Math.round(p.paymentOverride) : null,
+    });
+  }
+  return { id: r.id ?? '', name: r.name ?? '', principal: Math.max(0, Math.round(r.principal ?? 0)), months, startMonth, periods };
+}
+
+/** One month of a loan's repayment schedule. */
+export interface LoanMonth {
+  month: string;
+  /** 1-based number of the payment. */
+  part: number;
+  /** Index of the period the month belongs to. */
+  period: number;
+  /** Paid early at the start of this month (only when a period starts here). */
+  prepayment: number;
+  /** Owed at the start of the month, after any prepayment. */
+  opening: number;
+  interest: number;
+  payment: number;
+  /** Owed after this month's payment. */
+  closing: number;
+}
+
+const scheduleCache = new WeakMap<Loan, LoanMonth[]>();
+
+/**
+ * The whole repayment schedule, month by month. When a period starts, its
+ * prepayment comes off the balance and the payment is recalculated over the
+ * months left (or taken from the bank's figure). The last payment clears what
+ * rounding left.
+ */
+export function loanSchedule(loan: Loan): LoanMonth[] {
+  const cached = scheduleCache.get(loan);
+  if (cached) return cached;
+  const l = normalizeLoan(loan);
+  const out: LoanMonth[] = [];
+  let balance = l.principal;
+  let pi = -1;
+  let rate = 0;
+  let payment = 0;
+  for (let k = 0; k < l.months; k++) {
+    const month = shiftMonth(l.startMonth, k);
+    let prepayment = 0;
+    if (pi + 1 < l.periods.length && l.periods[pi + 1].from === month) {
+      pi++;
+      const p = l.periods[pi];
+      if (pi > 0) {
+        prepayment = Math.min(balance, p.prepayment);
+        balance -= prepayment;
+      }
+      rate = p.ratePct / 100 / 12;
+      payment = p.paymentOverride ?? annuityPayment(balance, p.ratePct, l.months - k);
+    }
+    const interest = Math.round(balance * rate);
+    const due = balance + interest;
+    const paid = k === l.months - 1 ? due : Math.min(payment, due);
+    out.push({ month, part: k + 1, period: pi, prepayment, opening: balance, interest, payment: paid, closing: due - paid });
+    balance = due - paid;
+  }
+  scheduleCache.set(loan, out);
+  return out;
+}
+
+/** The schedule entry for a month, or null outside the loan's term. */
+export function loanMonth(l: Loan, month: string): LoanMonth | null {
+  const i = monthsBetween(l.startMonth, month);
+  return i >= 0 && i < l.months ? loanSchedule(l)[i] : null;
+}
+
+/** The payment due in `month` (default: the first payment). 0 outside the term. */
+export function loanPayment(l: Loan, month: string = l.startMonth): number {
+  return loanMonth(l, month)?.payment ?? 0;
 }
 
 /** Which payment of the loan falls in a month (1-based), or null when none does. */
 export function loanPart(l: Loan, month: string): number | null {
-  const i = monthsBetween(l.startMonth, month);
-  return i >= 0 && i < l.months ? i + 1 : null;
+  return loanMonth(l, month)?.part ?? null;
 }
 
-/** Outstanding balance after `paid` payments (calculated, never below zero). */
+/** Outstanding balance after `paid` payments. */
 export function loanBalance(l: Loan, paid: number): number {
-  const r = l.ratePct / 100 / 12;
-  const p = loanPayment(l);
-  const k = Math.min(Math.max(0, paid), l.months);
-  const b = r <= 0 ? l.principal - p * k : l.principal * Math.pow(1 + r, k) - (p * (Math.pow(1 + r, k) - 1)) / r;
-  return Math.max(0, Math.round(b));
+  if (paid <= 0) return l.principal;
+  const s = loanSchedule(l);
+  return s[Math.min(paid, s.length) - 1].closing;
 }
 
 /** Payments made before `month` (the payment due in `month` itself not included). */
@@ -51,7 +144,55 @@ export function loanPaidBefore(l: Loan, month: string): number {
 
 /** Total interest over the life of the loan. */
 export function loanTotalInterest(l: Loan): number {
-  return Math.max(0, loanPayment(l) * l.months - l.principal);
+  return loanSchedule(l).reduce((s, m) => s + m.interest, 0);
+}
+
+/** The period a month falls in (the first before the loan starts, the last after it ends). */
+export function loanPeriodAt(l: Loan, month: string): LoanPeriod {
+  const periods = normalizeLoan(l).periods;
+  let p = periods[0];
+  for (const x of periods) if (x.from <= month) p = x;
+  return p;
+}
+
+/** Per period: when it runs, what is owed when it starts (before and after prepayment), and its payment. */
+export interface LoanPeriodSummary {
+  index: number;
+  from: string;
+  to: string;
+  ratePct: number;
+  /** Owed when the period starts, before its prepayment. */
+  carried: number;
+  prepayment: number;
+  /** Owed when the period starts, after its prepayment: the amount the period repays. */
+  principal: number;
+  payment: number;
+  /** The payment as calculated, whatever the bank's figure. */
+  calculated: number;
+  paymentOverride: number | null;
+}
+
+export function loanPeriods(loan: Loan): LoanPeriodSummary[] {
+  const l = normalizeLoan(loan);
+  const s = loanSchedule(loan);
+  const end = loanEndMonth(l);
+  return l.periods.map((p, i) => {
+    const first = s[monthsBetween(l.startMonth, p.from)];
+    const to = i + 1 < l.periods.length ? shiftMonth(l.periods[i + 1].from, -1) : end;
+    const left = monthsBetween(p.from, end) + 1;
+    return {
+      index: i,
+      from: p.from,
+      to,
+      ratePct: p.ratePct,
+      carried: first.opening + first.prepayment,
+      prepayment: first.prepayment,
+      principal: first.opening,
+      payment: first.payment,
+      calculated: annuityPayment(first.opening, p.ratePct, left),
+      paymentOverride: p.paymentOverride,
+    };
+  });
 }
 
 function monthsBetween(from: string, to: string): number {
@@ -261,8 +402,10 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   // Bank loans: a fixed loan repayment in each month they run.
   const loanLines: Line[] = [];
   for (const l of b.loans ?? []) {
-    const part = loanPart(l, month);
-    if (part !== null) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: loanPayment(l), kind: 'debt' });
+    const e = loanMonth(l, month);
+    if (!e) continue;
+    if (e.prepayment > 0) loanLines.push({ source: 'loan', id: `${l.id}#prepay`, name: `Trả trước: ${l.name}`, amount: e.prepayment, kind: 'debt' });
+    if (e.payment > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.payment, kind: 'debt' });
   }
   const fixedOut = total(fixedOutLines) + total(loanLines);
   const extraIn = total(extraInLines);

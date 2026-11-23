@@ -32,23 +32,40 @@ export interface OneOff {
   direction: 'in' | 'out';
 }
 
-/** A bank loan repaid in equal monthly instalments (annuity: principal + interest). */
+/**
+ * One stretch of a loan with its own terms. A period runs from `from` until
+ * the month before the next period starts; the last one until the loan ends.
+ */
+export interface LoanPeriod {
+  /** First month (YYYY-MM) of the period. The first period starts with the first payment. */
+  from: string;
+  /** Annual interest rate in this period, percent (fixed or the expected floating rate). */
+  ratePct: number;
+  /** Paid early at the start of the period, VND. Always 0 for the first period. */
+  prepayment: number;
+  /**
+   * The payment the bank actually charges in this period, when it differs
+   * from the calculation (day-count interest, fees). null = calculated.
+   */
+  paymentOverride: number | null;
+}
+
+/**
+ * A bank loan repaid in equal monthly payments (principal + interest). At the
+ * start of every period the payment is recalculated from the balance owed
+ * (after any prepayment), the period's rate and the months left.
+ */
 export interface Loan {
   id: string;
   name: string;
   /** Amount borrowed, VND. */
   principal: number;
-  /** Annual interest rate in percent. */
-  ratePct: number;
-  /** Number of monthly payments. */
+  /** Number of monthly payments over the whole loan. */
   months: number;
   /** Month (YYYY-MM) of the first payment. */
   startMonth: string;
-  /**
-   * The payment the bank actually charges, when it differs from the
-   * calculated one (day-count interest, fees). null = use the calculation.
-   */
-  paymentOverride: number | null;
+  /** At least one; sorted by `from`; the first starts at `startMonth`. */
+  periods: LoanPeriod[];
 }
 
 /** A purchase paid off on the credit card in equal monthly parts. */
@@ -131,6 +148,13 @@ export interface PlanDebt {
   balance: number | null;
   ratePct: number;
   monthlyPayment: number;
+  /**
+   * Bank loans only: the exact schedule from the current month on (index 0 =
+   * this month): what is paid (payment + any prepayment) and what is owed
+   * after. Used instead of the single rate and payment, so rate changes and
+   * prepayments in later periods are followed. Never stored.
+   */
+  schedule?: { payment: number; balance: number }[];
 }
 
 export interface PlanGoal {

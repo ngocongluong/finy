@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -244,7 +244,7 @@ export default function Budget() {
           <Card eye={'budget.loans'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
               <Txt v="heading">Vay ngân hàng</Txt>
-              <Amount value={loans.reduce((s, l) => s + (loanPart(l, now) ? loanPayment(l) : 0), 0)} color={c.muted} />
+              <Amount value={loans.reduce((s, l) => s + loanPayment(l, now), 0)} color={c.muted} />
             </Row>
             {loans.length === 0 ? (
               <Txt v="label">Chưa có khoản vay nào. Nhập số tiền vay, lãi suất và thời hạn, Finy tự tính số trả mỗi tháng và cộng vào chi cố định.</Txt>
@@ -252,12 +252,14 @@ export default function Budget() {
             {loans.map((l) => {
               const paid = loanPaidBefore(l, now);
               const running = loanPart(l, now) !== null;
+              const rate = loanPeriodAt(l, now).ratePct;
+              const periods = l.periods.length > 1 ? ` · ${l.periods.length} giai đoạn` : '';
               const sub = running
-                ? `${String(l.ratePct).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}`
+                ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${periods}`
                 : now < l.startMonth
                   ? `Bắt đầu trả ${monthLabel(l.startMonth).toLowerCase()}`
                   : 'Đã trả xong';
-              return <Line key={l.id} name={l.name} sub={sub} amount={loanPayment(l)} color={running ? c.text : c.muted} onPress={() => setLoan({ open: true, item: l })} />;
+              return <Line key={l.id} name={l.name} sub={sub} amount={running ? loanPayment(l, now) : loanPayment(l)} color={running ? c.text : c.muted} onPress={() => setLoan({ open: true, item: l })} />;
             })}
             <Btn label="Thêm khoản vay" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setLoan({ open: true, item: null })} />
           </Card>

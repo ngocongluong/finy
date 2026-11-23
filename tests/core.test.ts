@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, creditCycle, loanDebtNow, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, creditCycle, loanDebtNow, loanMonth, loanPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
-import type { FixedItem, OneOff, Tx } from '../src/lib/types';
+import type { FixedItem, Loan, OneOff, Tx } from '../src/lib/types';
 
 // Made-up household used as the fixture.
 const fixed: FixedItem[] = [
@@ -26,6 +26,16 @@ const oneOffs: OneOff[] = [
 ];
 
 const B: Budget = { fixed, oneOffs, overrides: {} };
+
+/** A one-period loan in the current shape. */
+const mkLoan = (o: { principal: number; ratePct: number; months: number; startMonth: string; paymentOverride?: number | null }): Loan => ({
+  id: 'l',
+  name: 'Vay',
+  principal: o.principal,
+  months: o.months,
+  startMonth: o.startMonth,
+  periods: [{ from: o.startMonth, ratePct: o.ratePct, prepayment: 0, paymentOverride: o.paymentOverride ?? null }],
+});
 
 test('money formatting', () => {
   assert.equal(fmtVND(20_000_000), '20.000.000 đ');
@@ -454,19 +464,19 @@ test('a bank loan: equal monthly payments that repay it exactly', () => {
   // 1,000,000,000 at 12%/year over 12 months: the standard annuity formula.
   assert.equal(annuityPayment(1_000_000_000, 12, 12), 88_848_789);
   assert.equal(annuityPayment(1_200_000, 0, 12), 100_000); // no interest: principal / months
-  const loan = { id: 'l', name: 'Vay', principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-01', paymentOverride: null };
-  assert.ok(loanBalance(loan, 12) < 100); // only rounding left after the last payment
+  const loan = mkLoan({ principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-01' });
+  assert.equal(loanBalance(loan, 12), 0); // the last payment clears what rounding left
   assert.equal(loanBalance(loan, 0), 1_000_000_000);
   assert.ok(Math.abs(loanBalance(loan, 1) - (1_010_000_000 - 88_848_789)) <= 1); // one month of interest, minus the payment
-  assert.equal(loanTotalInterest(loan), 88_848_789 * 12 - 1_000_000_000);
+  assert.ok(Math.abs(loanTotalInterest(loan) - (88_848_789 * 12 - 1_000_000_000)) <= 12); // rounding of monthly interest
   assert.deepEqual(['2025-12', '2026-01', '2026-12', '2027-01'].map((m) => loanPart(loan, m)), [null, 1, 12, null]);
   assert.equal(loanPaidBefore(loan, '2026-04'), 3);
   // The bank's own figure wins over the calculation.
-  assert.equal(loanPayment({ ...loan, paymentOverride: 90_000_000 }), 90_000_000);
+  assert.equal(loanPayment(mkLoan({ principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-01', paymentOverride: 90_000_000 })), 90_000_000);
 });
 
 test('a loan is a fixed loan repayment while it runs, and an exact debt in the long-range plan', () => {
-  const loan = { id: 'l', name: 'Vay mua nhà', principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-11', paymentOverride: null };
+  const loan = { ...mkLoan({ principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-11' }), name: 'Vay mua nhà' };
   const b: Budget = { fixed, oneOffs: [], overrides: {}, loans: [loan] };
   const nov = monthFlow(b, '2026-11');
   assert.equal(nov.expense, 30_000_000 + 88_848_789);
@@ -505,13 +515,77 @@ test('projected money: what is on hand plus each month\'s saving, from the month
 });
 
 test('money owed on loans now, and the plan starting from cash minus that', () => {
-  const loan = { id: 'l', name: 'Vay', principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-11', paymentOverride: null };
+  const loan = mkLoan({ principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-11' });
   assert.equal(loanDebtNow([loan], '2026-11'), 1_000_000_000);
   assert.equal(loanDebtNow([loan], '2027-01'), loanBalance(loan, 2));
   const b: Budget = { fixed, oneOffs: [], overrides: {}, loans: [loan] };
   assert.equal(resolvePlan(DEFAULT_PLAN, b, [], '2026-11', { amount: 1_500_000_000 }).startNetWorth, 500_000_000);
   // Accounts, when kept, still win.
   assert.equal(resolvePlan(DEFAULT_PLAN, b, [{ id: 'a', name: 'A', kind: 'bank', balance: 7 }], '2026-11', { amount: 1 }).startNetWorth, 7);
+});
+
+test('a loan in periods: a prepayment and a new rate recalculate the payment over the months left', () => {
+  const loan: Loan = {
+    id: 'l',
+    name: 'Vay',
+    principal: 1_200_000_000,
+    months: 24,
+    startMonth: '2026-01',
+    periods: [
+      { from: '2026-01', ratePct: 6, prepayment: 0, paymentOverride: null },
+      { from: '2026-07', ratePct: 9, prepayment: 300_000_000, paymentOverride: null },
+    ],
+  };
+  const [p1, p2] = loanPeriods(loan);
+  assert.equal(p1.payment, annuityPayment(1_200_000_000, 6, 24));
+  assert.deepEqual([p1.from, p1.to, p2.from, p2.to], ['2026-01', '2026-06', '2026-07', '2027-12']);
+  // Period 2 starts from what was owed after six payments, minus the prepayment, at 9% over 18 months.
+  const owed = loanBalance(loan, 6);
+  assert.equal(p2.carried, owed);
+  assert.equal(p2.principal, owed - 300_000_000);
+  assert.equal(p2.payment, annuityPayment(owed - 300_000_000, 9, 18));
+  assert.equal(loanBalance(loan, 24), 0);
+
+  // The month of the prepayment: it is spent that month, next to the new payment.
+  const b: Budget = { fixed: [], oneOffs: [], overrides: {}, loans: [loan] };
+  const july = monthFlow(b, '2026-07');
+  assert.deepEqual(july.expenseLines.map((l) => [l.name, l.amount]), [['Trả trước: Vay', 300_000_000], ['Vay', p2.payment]]);
+  assert.equal(monthFlow(b, '2026-08').expense, p2.payment);
+  assert.equal(loanMonth(loan, '2026-07')?.prepayment, 300_000_000);
+});
+
+test('loans saved by older versions (one rate on the loan) become one period; periods are tidied', () => {
+  const old = { id: 'x', name: 'Cũ', principal: 100, ratePct: 7, months: 12, startMonth: '2026-01', paymentOverride: 9 };
+  assert.deepEqual(normalizeLoan(old).periods, [{ from: '2026-01', ratePct: 7, prepayment: 0, paymentOverride: 9 }]);
+  const messy = normalizeLoan({
+    id: 'y', name: 'X', principal: 100, months: 12, startMonth: '2026-01',
+    periods: [
+      { from: '2026-05', ratePct: 8, prepayment: 5, paymentOverride: null },
+      { from: '2025-12', ratePct: 6, prepayment: 99, paymentOverride: null }, // becomes the first period
+      { from: '2027-06', ratePct: 9, prepayment: 0, paymentOverride: null }, // after the loan ends: dropped
+    ],
+  });
+  assert.deepEqual(messy.periods.map((p) => [p.from, p.ratePct, p.prepayment]), [['2026-01', 6, 0], ['2026-05', 8, 5]]);
+  assert.equal(loanSchedule(messy).length, 12);
+});
+
+test('the long-range plan follows a loan period by period', () => {
+  const loan: Loan = {
+    id: 'l', name: 'Vay', principal: 1_200_000_000, months: 24, startMonth: '2026-11',
+    periods: [
+      { from: '2026-11', ratePct: 6, prepayment: 0, paymentOverride: null },
+      { from: '2027-03', ratePct: 9, prepayment: 300_000_000, paymentOverride: null },
+    ],
+  };
+  const b: Budget = { fixed: [], oneOffs: [], overrides: {}, loans: [loan] };
+  const inp = resolvePlan({ ...DEFAULT_PLAN, monthlyIncome: 0, monthlyExpense: 0, incomeGrowthPct: 0, inflationPct: 0, returnPct: 0 }, b, [], '2026-11', { amount: 2_000_000_000 });
+  const d = inp.debts[0];
+  assert.equal(d.schedule?.[4].payment, 300_000_000 + loanPeriods(loan)[1].payment); // March 2027: prepayment + new payment
+  const p = project(inp);
+  assert.equal(p.debtFreeMonth, 24);
+  // Cash minus debt at the start; after the loan, net worth fell by exactly the interest paid.
+  assert.equal(p.rows[0].netWorth, 2_000_000_000 - 1_200_000_000);
+  assert.ok(Math.abs(p.rows[2].netWorth - (2_000_000_000 - 1_200_000_000 - loanTotalInterest(loan))) < 1_000);
 });
 
 test('only bank mail that reads like a transaction is sent on to Claude', () => {
