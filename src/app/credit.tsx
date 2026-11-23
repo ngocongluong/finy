@@ -70,7 +70,10 @@ export default function CreditCycleScreen() {
           <>
             <Meter ratio={flow.creditPlanned > 0 ? flow.creditSpent / flow.creditPlanned : flow.creditSpent > 0 ? 1 : 0} color={flow.creditOver > 0 ? c.negative : c.accent} />
             <Row>
-              <Txt v="small">Dự chi {money(flow.creditPlanned)}</Txt>
+              <Txt v="small" numberOfLines={1} style={{ flexShrink: 1, marginRight: 8 }}>
+                Dự chi {money(flow.creditPlanned)}
+                {flow.creditLine?.name && flow.creditLine.name !== 'Dự chi tín dụng' ? ` · ${flow.creditLine.name}` : ''}
+              </Txt>
               <Txt v="small" color={flow.creditOver > 0 ? c.negative : c.muted}>
                 {flow.creditOver > 0 ? `Vượt ${money(flow.creditOver)}` : `${flow.creditClosed ? 'Thấp hơn' : 'Còn'} ${money(flow.creditPlanned - flow.creditSpent)}`}
               </Txt>

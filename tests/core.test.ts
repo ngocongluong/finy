@@ -192,7 +192,7 @@ test('card spending: an open cycle counts the plan (or more), a closed one count
   assert.deepEqual([under.creditPlanned, under.creditSpent, under.creditOver, under.creditClosed], [8_000_000, 7_500_000, 0, false]);
   assert.equal(under.creditCounted, 8_000_000); // still open: the plan is what is budgeted
   assert.equal(under.expense, 30_000_000 + 8_000_000);
-  assert.equal(under.creditLine?.id, 'cc');
+  assert.deepEqual(under.creditPlanLines.map((l) => l.id), ['cc']); // the plan item behind the combined line
   assert.ok(!under.expenseLines.some((l) => l.id === 'cc')); // shown in its own section
 
   const over = monthFlow(withPlan(6_000_000), '2026-12', open);
@@ -476,6 +476,24 @@ test('a loan is a fixed loan repayment while it runs, and an exact debt in the l
   const inp = resolvePlan(DEFAULT_PLAN, b, [], '2027-01');
   const d = inp.debts.find((x) => x.id === 'l')!;
   assert.deepEqual([d.balance, d.ratePct, d.monthlyPayment], [loanBalance(loan, 2), 12, 88_848_789]);
+});
+
+test('the card plan can be several items: one line with the total and the notes joined', () => {
+  const b: Budget = {
+    fixed: [
+      ...fixed,
+      { id: 'c1', name: 'Ăn uống', amount: 10_000_000, direction: 'out', kind: 'credit' },
+      { id: 'c2', name: 'Xăng xe', amount: 3_000_000, direction: 'out', kind: 'credit' },
+    ],
+    oneOffs: [],
+    overrides: {},
+  };
+  const f = monthFlow(b, '2026-12', { txs: [], statementDay: 14, today: '2026-12-01' });
+  assert.equal(f.creditPlanned, 13_000_000);
+  assert.deepEqual([f.creditLine?.name, f.creditLine?.amount], ['Ăn uống, Xăng xe', 13_000_000]);
+  assert.deepEqual(f.creditPlanLines.map((l) => l.id), ['c1', 'c2']);
+  assert.ok(!f.expenseLines.some((l) => l.kind === 'credit')); // not listed one by one among expenses
+  assert.equal(f.expense, 30_000_000 + 13_000_000);
 });
 
 test('only bank mail that reads like a transaction is sent on to Claude', () => {

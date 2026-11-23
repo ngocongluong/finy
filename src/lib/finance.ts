@@ -207,7 +207,10 @@ export interface MonthFlow {
   incomeLines: Line[];
   /** Expenses other than the credit-card plan. */
   expenseLines: Line[];
+  /** The card plan as one line: total of all plan items, named by their notes joined with commas. */
   creditLine: Line | null;
+  /** The individual card plan items. */
+  creditPlanLines: Line[];
   /** Fixed items charged to the card each cycle; included in creditSpent. */
   onCardLines: Line[];
   /** Instalment parts due in this statement month; included in creditSpent. */
@@ -232,8 +235,21 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
   const extraInLines = mine.filter((o) => o.direction === 'in').map(oneOffLine);
   const extraOutLines = mine.filter((o) => o.direction === 'out').map(oneOffLine);
 
-  const creditLine = fixedOutLines.find((l) => l.kind === 'credit') ?? null;
-  const creditPlanned = creditLine?.amount ?? 0;
+  // The card plan can be several items, each named by its note; outside it shows as one line:
+  // the total, named by the notes joined with commas.
+  const creditPlanLines = fixedOutLines.filter((l) => l.kind === 'credit');
+  const creditPlanned = total(creditPlanLines);
+  const creditLine: Line | null = creditPlanLines.length
+    ? {
+        source: 'fixed',
+        id: 'credit-plan',
+        name: creditPlanLines.map((l) => l.name).filter(Boolean).join(', ') || 'Dự chi tín dụng',
+        amount: creditPlanned,
+        base: total(creditPlanLines.map((l) => ({ amount: l.base ?? l.amount }))),
+        overridden: creditPlanLines.some((l) => l.overridden),
+        kind: 'credit',
+      }
+    : null;
   const cycle = credit ? creditCycle(month, credit.statementDay) : null;
   const instLines = instalmentLines(b.instalments, month);
   const spent = (credit && cycle ? creditSpent(credit.txs, cycle) : 0) + total(onCardLines) + total(instLines);
@@ -275,6 +291,7 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     incomeLines: [...fixedInLines, ...extraInLines],
     expenseLines: [...fixedOutLines.filter((l) => l.kind !== 'credit'), ...loanLines, ...extraOutLines],
     creditLine,
+    creditPlanLines,
     onCardLines,
     instalmentLines: instLines,
   };

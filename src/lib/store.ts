@@ -238,9 +238,8 @@ export const useStore = create<State>((set, get) => ({
     };
     const cur = get().fixed;
     let fixed = cur.some((f) => f.id === full.id) ? cur.map((f) => (f.id === full.id ? full : f)) : [...cur, full];
-    // Only one expense can be the daily-spending bucket, and only one the credit-card plan.
+    // Only one expense can be the daily-spending bucket. The card plan can be several items.
     if (full.daily) fixed = fixed.map((f) => (f.id === full.id ? f : { ...f, daily: undefined }));
-    if (full.kind === 'credit') fixed = fixed.map((f) => (f.id === full.id || f.kind !== 'credit' ? f : { ...f, kind: 'expense' }));
     set({ fixed });
     persist('fixed', fixed);
     return full;

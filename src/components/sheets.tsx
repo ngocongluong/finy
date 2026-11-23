@@ -172,7 +172,6 @@ export function FixedSheet({
           options={[
             { value: 'expense', label: 'Chi tiêu' },
             { value: 'debt', label: 'Trả nợ vay' },
-            { value: 'credit', label: 'Tín dụng' },
           ]}
         />
       ) : null}
@@ -188,7 +187,7 @@ export function FixedSheet({
         <Toggle label="Đây là quỹ chi tiêu hằng ngày" hint="Finy chia quỹ này theo ngày để theo dõi tiền tiêu vặt." value={daily} onChange={setDaily} />
       ) : null}
       {out && kind === 'credit' ? (
-        <Txt v="small">Số tiền dự định quẹt thẻ tín dụng mỗi kỳ sao kê. Finy so với số đã quẹt lấy từ email HSBC và báo khi vượt. Chỉ một khoản được là dự chi tín dụng.</Txt>
+        <Txt v="small">Một khoản dự chi tín dụng mỗi kỳ sao kê; tên là ghi chú của khoản. Nhiều khoản được cộng thành tổng dự chi.</Txt>
       ) : null}
       {item ? (
         <Btn
@@ -840,6 +839,77 @@ export function LoanSheet({ visible, onClose, item }: { visible: boolean; onClos
           }
         />
       ) : null}
+    </Sheet>
+  );
+}
+
+interface PlanRow {
+  id?: string;
+  note: string;
+  amount: number;
+  key: number;
+}
+
+/**
+ * The credit-card plan per statement cycle, as several items with a note each.
+ * Saved as fixed expenses of kind "credit" (the note is the item's name).
+ */
+export function CreditPlanSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { c } = useUi();
+  const money = useMoney();
+  const fixed = useStore((s) => s.fixed);
+  const upsertFixed = useStore((s) => s.upsertFixed);
+  const deleteFixed = useStore((s) => s.deleteFixed);
+  const [rows, setRows] = useState<PlanRow[]>([]);
+  const nextKey = React.useRef(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    const items = fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
+    const loaded = items.map((f) => ({ id: f.id, note: f.name, amount: f.amount, key: nextKey.current++ }));
+    setRows(loaded.length ? loaded : [{ note: '', amount: 0, key: nextKey.current++ }]);
+    // Only when the sheet opens: edits in progress must not be reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const update = (key: number, patch: Partial<PlanRow>) => setRows((cur) => cur.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const totalAmount = rows.reduce((s, r) => s + (r.amount > 0 ? r.amount : 0), 0);
+  const notes = rows.filter((r) => r.amount > 0 && r.note.trim()).map((r) => r.note.trim()).join(', ');
+  const valid = rows.every((r) => r.amount <= 0 || r.note.trim());
+
+  const save = () => {
+    const keep = new Set<string>();
+    for (const r of rows) {
+      if (!(r.amount > 0)) continue;
+      const saved = upsertFixed({ id: r.id, name: r.note.trim(), amount: r.amount, direction: 'out', kind: 'credit' });
+      keep.add(saved.id);
+    }
+    for (const f of fixed) if (f.direction === 'out' && f.kind === 'credit' && !keep.has(f.id)) deleteFixed(f.id);
+    onClose();
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Dự chi tín dụng mỗi kỳ" footer={<Btn label="Lưu" icon="checkmark" disabled={!valid} onPress={save} />}>
+      <Txt v="small">Số tiền dự định quẹt thẻ mỗi kỳ sao kê, chia theo khoản. Finy so tổng dự chi với số thực xài và báo khi vượt.</Txt>
+      {rows.map((r, i) => (
+        <View key={r.key} style={{ gap: 8, backgroundColor: c.cardAlt, borderRadius: 12, padding: 12 }}>
+          <Row>
+            <Txt v="label">Khoản {i + 1}</Txt>
+            <IconBtn name="trash-outline" size={18} color={c.negative} onPress={() => setRows((cur) => cur.filter((x) => x.key !== r.key))} label={`Xoá khoản ${i + 1}`} />
+          </Row>
+          <Field label="Ghi chú" value={r.note} onChangeText={(t) => update(r.key, { note: t })} placeholder="Ăn uống, xăng xe, mua sắm…" />
+          <AmountField label="Số tiền mỗi kỳ" value={r.amount} onChange={(n) => update(r.key, { amount: n })} />
+          {r.amount > 0 && !r.note.trim() ? <Txt v="small" color={c.warning}>Nhập ghi chú cho khoản này.</Txt> : null}
+        </View>
+      ))}
+      <Btn label="Thêm khoản dự chi" icon="add" kind="ghost" onPress={() => setRows((cur) => [...cur, { note: '', amount: 0, key: nextKey.current++ }])} />
+      <View style={{ backgroundColor: c.cardAlt, borderRadius: 12, padding: 12, gap: 4 }}>
+        <Row>
+          <Txt v="label">Tổng dự chi mỗi kỳ</Txt>
+          <Txt v="title">{money(totalAmount)}</Txt>
+        </Row>
+        {notes ? <Txt v="small">{notes}</Txt> : null}
+      </View>
     </Sheet>
   );
 }

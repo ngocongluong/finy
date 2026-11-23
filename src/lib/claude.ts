@@ -131,7 +131,7 @@ function buildTools(log: (action: string) => void) {
     betaZodTool({
       name: 'set_fixed_item',
       description:
-        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks the planned credit-card spend per statement cycle (only one item can be it); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for particular months only, use set_month_amount instead.',
+        'Create or edit an income source or an expense that repeats EVERY month. Pass id to edit an existing one (ids are in the snapshot under cashFlow.fixed); omit id to add. direction: in = income, out = expense. For expenses only: kind debt marks a loan repayment (it feeds the long-range plan); kind credit marks a planned credit-card spend per statement cycle (there can be several; the name of each is its note, e.g. "Ăn uống", and the app shows their total with the notes joined); daily=true marks the one expense whose amount is the day-to-day spending bucket. To change an amount for particular months only, use set_month_amount instead.',
       inputSchema: z.object({
         id: z.string().optional(),
         name: z.string(),

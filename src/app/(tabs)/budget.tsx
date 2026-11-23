@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { ACCOUNT_KINDS, AccountSheet, FixedSheet, InstalmentSheet, LoanSheet } from '../../components/sheets';
+import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
 import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
@@ -64,7 +64,10 @@ export default function Budget() {
   const sumOut = rows.reduce((s, r) => s + r.expense, 0);
 
   const fixedIn = budget.fixed.filter((f) => f.direction === 'in');
-  const fixedOut = budget.fixed.filter((f) => f.direction === 'out');
+  const fixedOut = budget.fixed.filter((f) => f.direction === 'out' && f.kind !== 'credit');
+  // The card plan shows as one line: its total, named by the notes of its items.
+  const creditPlan = budget.fixed.filter((f) => f.direction === 'out' && f.kind === 'credit');
+  const [planOpen, setPlanOpen] = useState(false);
   const base = monthFlow({ ...budget, oneOffs: [], overrides: {} }, now);
   const empty = budget.fixed.length === 0;
   const cell = { flex: 1, textAlign: 'right' as const };
@@ -172,12 +175,19 @@ export default function Budget() {
               <Txt v="heading">Chi cố định hàng tháng</Txt>
               <Amount value={base.fixedOut} color={c.muted} />
             </Row>
+            <Line
+              name="Dự chi tín dụng"
+              sub={creditPlan.length ? creditPlan.map((f) => f.name).join(', ') : 'Chưa đặt — chạm để nhập các khoản dự chi'}
+              amount={creditPlan.reduce((s, f) => s + f.amount, 0)}
+              icon={<Ionicons name="card-outline" size={20} color={c.muted} />}
+              onPress={() => setPlanOpen(true)}
+            />
             {fixedOut.length === 0 ? <Txt v="label">Chưa có khoản chi nào. Thêm tiền nhà, học phí, trả nợ, quỹ chi tiêu hằng ngày…</Txt> : null}
             {fixedOut.map((f) => (
               <Line
                 key={f.id}
                 name={f.name}
-                sub={f.kind === 'debt' ? 'Trả nợ vay' : f.kind === 'credit' ? 'Dự chi tín dụng mỗi kỳ sao kê' : f.onCard ? 'Trả qua thẻ tín dụng mỗi kỳ' : f.daily ? 'Quỹ chi tiêu hằng ngày' : undefined}
+                sub={f.kind === 'debt' ? 'Trả nợ vay' : f.onCard ? 'Trả qua thẻ tín dụng mỗi kỳ' : f.daily ? 'Quỹ chi tiêu hằng ngày' : undefined}
                 amount={f.amount}
                 onPress={() => setFixedSheet({ direction: 'out', item: f })}
               />
@@ -273,6 +283,7 @@ export default function Budget() {
       <View style={{ height: gap }} />
       <FixedSheet visible={fixedSheet.open} onClose={() => setFixedSheet(null)} direction={fixedSheet.direction} item={fixedSheet.item} />
       <AccountSheet visible={account !== undefined} onClose={() => setAccount(undefined)} account={account} />
+      <CreditPlanSheet visible={planOpen} onClose={() => setPlanOpen(false)} />
       <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} />
       <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />
     </Screen>

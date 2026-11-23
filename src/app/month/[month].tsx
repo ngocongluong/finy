@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { FixedSheet, LoanSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
+import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
 import { creditCycle, monthFlow, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
@@ -49,7 +49,9 @@ export default function MonthDetail() {
   const daysToStatement = cycleOpen ? daysBetween(today, cycle.end) : 0;
 
   const openLine = (l: Line) => {
-    if (l.source === 'fixed') {
+    if (l.id === 'credit-plan') {
+      setCreditSetup(true);
+    } else if (l.source === 'fixed') {
       const item = budget.fixed.find((f) => f.id === l.id);
       if (item) setFixedEdit({ open: true, item });
     } else if (l.source === 'loan') {
@@ -176,7 +178,8 @@ export default function MonthDetail() {
 
         {flow.creditLine ? (
           <>
-            {renderLine({ ...flow.creditLine, name: `Dự chi: ${flow.creditLine.name}` })}
+            {renderLine({ ...flow.creditLine, name: 'Dự chi tín dụng', overridden: false })}
+            <Txt v="small" style={{ marginTop: -4 }}>{flow.creditLine.name}</Txt>
             <Row>
               <Txt v="label">Đã xài trong kỳ ({cycleTxs.length} giao dịch)</Txt>
               <Amount value={flow.creditSpent} color={flow.creditOver > 0 ? c.negative : c.text} />
@@ -228,7 +231,7 @@ export default function MonthDetail() {
         defaultMonth={month}
         defaultDirection={oneOff.direction}
       />
-      <FixedSheet visible={creditSetup} onClose={() => setCreditSetup(false)} direction="out" initialKind="credit" />
+      <CreditPlanSheet visible={creditSetup} onClose={() => setCreditSetup(false)} />
       <LoanSheet visible={loanEdit.open} onClose={() => setLoanEdit((v) => ({ ...v, open: false }))} item={loanEdit.item} />
       <TxSheet visible={tx !== undefined} onClose={() => setTx(undefined)} tx={tx} />
     </Screen>
