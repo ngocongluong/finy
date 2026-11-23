@@ -147,7 +147,7 @@ export default function Budget() {
           </Card>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
-            {[6, 12].map((n) => (
+            {[6, 12, 24, 36].map((n) => (
               <Chip key={n} label={`${n} tháng tới`} active={period.kind === 'next' && period.months === n} onPress={() => setPeriod({ kind: 'next', months: n })} />
             ))}
             {years.map((y) => (
