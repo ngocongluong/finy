@@ -314,6 +314,36 @@ export function flowTable(b: Budget, start: string, count: number, credit?: Cred
   return rows;
 }
 
+// ---- money on hand, projected ----
+
+/**
+ * Money expected at the end of each month: what the user has now plus every
+ * month's saving from the month it was entered up to and including that
+ * month. Months before it have no projection (null).
+ */
+export function projectedCash(b: Budget, cash: { amount: number; month: string } | null, months: string[], credit?: CreditData): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  if (!cash || !months.length) {
+    for (const m of months) out.set(m, null);
+    return out;
+  }
+  const last = [...months].sort()[months.length - 1];
+  const byMonth = new Map<string, number>();
+  let running = cash.amount;
+  for (let m = cash.month; m <= last; m = shiftMonth(m, 1)) {
+    running += monthFlow(b, m, credit).saving;
+    byMonth.set(m, running);
+  }
+  // In the order the months were asked for.
+  for (const m of months) out.set(m, byMonth.get(m) ?? null);
+  return out;
+}
+
+/** What is still owed on all bank loans at the start of `month`. */
+export function loanDebtNow(loans: Loan[] | undefined, month: string): number {
+  return (loans ?? []).reduce((s, l) => s + loanBalance(l, loanPaidBefore(l, month)), 0);
+}
+
 // ---- net worth and day-to-day spending ----
 
 export function netWorth(accounts: Account[]): number {

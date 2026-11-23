@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, creditCycle, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, creditCycle, loanDebtNow, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
@@ -494,6 +494,24 @@ test('the card plan can be several items: one line with the total and the notes 
   assert.deepEqual(f.creditPlanLines.map((l) => l.id), ['c1', 'c2']);
   assert.ok(!f.expenseLines.some((l) => l.kind === 'credit')); // not listed one by one among expenses
   assert.equal(f.expense, 30_000_000 + 13_000_000);
+});
+
+test('projected money: what is on hand plus each month\'s saving, from the month it was entered', () => {
+  const b: Budget = { fixed, oneOffs, overrides: {} };
+  const p = projectedCash(b, { amount: 100_000_000, month: '2026-12' }, ['2026-11', '2026-12', '2027-01', '2027-02']);
+  // 20M a month; January has the bonus (+45M saving), February the repair (-40M).
+  assert.deepEqual([...p.values()], [null, 120_000_000, 165_000_000, 125_000_000]);
+  assert.deepEqual([...projectedCash(b, null, ['2026-12']).values()], [null]);
+});
+
+test('money owed on loans now, and the plan starting from cash minus that', () => {
+  const loan = { id: 'l', name: 'Vay', principal: 1_000_000_000, ratePct: 12, months: 12, startMonth: '2026-11', paymentOverride: null };
+  assert.equal(loanDebtNow([loan], '2026-11'), 1_000_000_000);
+  assert.equal(loanDebtNow([loan], '2027-01'), loanBalance(loan, 2));
+  const b: Budget = { fixed, oneOffs: [], overrides: {}, loans: [loan] };
+  assert.equal(resolvePlan(DEFAULT_PLAN, b, [], '2026-11', { amount: 1_500_000_000 }).startNetWorth, 500_000_000);
+  // Accounts, when kept, still win.
+  assert.equal(resolvePlan(DEFAULT_PLAN, b, [{ id: 'a', name: 'A', kind: 'bank', balance: 7 }], '2026-11', { amount: 1 }).startNetWorth, 7);
 });
 
 test('only bank mail that reads like a transaction is sent on to Claude', () => {

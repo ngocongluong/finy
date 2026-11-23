@@ -8,7 +8,7 @@ import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, ChatMsg, CreditCardInfo, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
 
 /**
  * The address HSBC Vietnam sends card-transaction alerts from. Which senders
@@ -49,6 +49,8 @@ interface State {
   instalments: Instalment[];
   /** Bank loans. */
   loans: Loan[];
+  /** Money the user has now (entered on the Budget tab). */
+  cash: CashOnHand | null;
   accounts: Account[];
   txs: Tx[];
   plan: PlanParams;
@@ -73,6 +75,7 @@ interface State {
   deleteInstalment: (id: string) => void;
   upsertLoan: (l: Omit<Loan, 'id'> & { id?: string }) => Loan;
   deleteLoan: (id: string) => void;
+  setCash: (amount: number | null) => void;
   /** Adds the same one-off to each of the given months. */
   addOneOffs: (months: string[], item: Omit<OneOff, 'id' | 'month'>) => OneOff[];
   updateOneOff: (item: OneOff) => void;
@@ -131,6 +134,7 @@ export const useStore = create<State>((set, get) => ({
   creditCard: null,
   instalments: [],
   loans: [],
+  cash: null,
   accounts: [],
   txs: [],
   plan: DEFAULT_PLAN,
@@ -156,7 +160,7 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, creditCard, instalments, loans, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, creditCard, instalments, loans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
@@ -164,6 +168,7 @@ export const useStore = create<State>((set, get) => ({
         db.kvGet<CreditCardInfo>('creditCard'),
         db.kvGet<Instalment[]>('instalments'),
         db.kvGet<Loan[]>('loans'),
+        db.kvGet<CashOnHand>('cash'),
         db.kvGet<boolean>('creditMarked'),
         db.kvGet<Record<string, MonthBudget>>('budgets'),
         db.kvGet<Account[]>('accounts'),
@@ -193,6 +198,7 @@ export const useStore = create<State>((set, get) => ({
         creditCard: creditCard ?? null,
         instalments: instalments ?? [],
         loans: loans ?? [],
+        cash: cash ?? null,
         accounts: accounts ?? seeded?.accounts ?? [],
         plan: { ...DEFAULT_PLAN, ...(plan ?? {}) },
         settings: mergedSettings,
@@ -203,6 +209,10 @@ export const useStore = create<State>((set, get) => ({
       });
       if (fixed === null || allFixed !== loadedFixed) persist('fixed', allFixed);
       if (!creditMarked) persist('creditMarked', true);
+      // Once: money on hand from the private seed, if the app has none yet.
+      const seedCash = (Constants.expoConfig?.extra?.seed as Seed | null)?.cashOnHand;
+      if (!cash && seedCash && !(await db.kvGet<boolean>('cashSeeded'))) get().setCash(seedCash);
+      if (!(await db.kvGet<boolean>('cashSeeded'))) persist('cashSeeded', true);
       // Sync again right after this unlock instead of waiting for the 30-minute spacing.
       if (reimport) get().setSettings({ lastSyncTs: null });
       // Once: older versions remembered mail from untrusted senders as processed,
@@ -306,6 +316,12 @@ export const useStore = create<State>((set, get) => ({
     set({ loans });
     persist('loans', loans);
     return full;
+  },
+
+  setCash: (amount) => {
+    const cash = amount === null ? null : { amount: Math.round(amount), month: monthKey() };
+    set({ cash });
+    persist('cash', cash);
   },
 
   deleteLoan: (id) => {
@@ -454,6 +470,7 @@ export const useStore = create<State>((set, get) => ({
       creditCard: null,
       instalments: [],
       loans: [],
+      cash: null,
       accounts: [],
       txs: [],
       plan: DEFAULT_PLAN,
@@ -466,6 +483,7 @@ export const useStore = create<State>((set, get) => ({
     persist('oneOffs', []);
     persist('instalments', []);
     persist('loans', []);
+    persist('cash', null);
     persist('creditMarked', true);
     persist('accounts', []);
   },

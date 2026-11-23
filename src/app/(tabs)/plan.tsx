@@ -120,7 +120,8 @@ export default function Plan() {
   const [debt, setDebt] = useState<PlanDebt | null | undefined>(undefined);
   const [goal, setGoal] = useState<PlanGoal | null | undefined>(undefined);
 
-  const inputs = useMemo(() => resolvePlan(plan, budget, accounts, monthKey()), [plan, budget, accounts]);
+  const cash = useStore((s) => s.cash);
+  const inputs = useMemo(() => resolvePlan(plan, budget, accounts, monthKey(), cash), [plan, budget, accounts, cash]);
   const all = useMemo(() => projectAll(inputs), [inputs]);
   const base = all.base;
   const last = base.rows[base.rows.length - 1];

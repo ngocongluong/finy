@@ -5,8 +5,8 @@ import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
 import Constants from 'expo-constants';
 import { Alert } from 'react-native';
 import { z } from 'zod';
-import { annuityPayment, creditCycle, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
-import { dateKey, fmtTime, fmtVND, monthKey, monthLabel, uid } from './format';
+import { annuityPayment, creditCycle, loanDebtNow, projectedCash, cycleMonthOf, dailyStats, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth } from './finance';
+import { dateKey, fmtTime, fmtVND, monthKey, monthLabel, shiftMonth, uid } from './format';
 import { project, resolvePlan } from './plan';
 import { useStore } from './store';
 import { HOME_SECTIONS, METRIC_LABELS } from './theme';
@@ -263,6 +263,16 @@ function buildTools(log: (action: string) => void) {
       },
     }),
     betaZodTool({
+      name: 'set_cash_on_hand',
+      description: 'Set how much money the user has right now (VND). The Budget table projects it forward month by month with each month\'s saving.',
+      inputSchema: z.object({ amount: z.number() }),
+      run: (i) => {
+        s().setCash(i.amount);
+        log(`Đã đặt tiền đang có: ${fmtVND(i.amount)}`);
+        return 'Saved.';
+      },
+    }),
+    betaZodTool({
       name: 'set_statement_day',
       description: 'Set the day of the month on which the credit-card statement closes (1-28).',
       inputSchema: z.object({ day: z.number().int().min(1).max(28) }),
@@ -459,7 +469,7 @@ function buildTools(log: (action: string) => void) {
         s().setPlan(patch);
         log('Đã cập nhật kế hoạch dài hạn');
         const st = s();
-        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans }, st.accounts, monthKey()));
+        const proj = project(resolvePlan(st.plan, { fixed: st.fixed, oneOffs: st.oneOffs, overrides: st.overrides, instalments: st.instalments, loans: st.loans }, st.accounts, monthKey(), st.cash));
         return `Saved. New base projection (net worth by year): ${JSON.stringify(proj.rows.map((r) => [r.year, Math.round(r.netWorth)]))}`;
       },
     }),
@@ -475,7 +485,7 @@ export function snapshot(): string {
   const credit = { txs: st.txs, statementDay: st.settings.statementDay };
   const flow = monthFlow(budget, month, credit);
   const daily = dailyStats(flow.dailyBucket, st.txs, today);
-  const inputs = resolvePlan(st.plan, budget, st.accounts, month);
+  const inputs = resolvePlan(st.plan, budget, st.accounts, month, st.cash);
   const proj = project(inputs);
   const round = (n: number) => (Number.isFinite(n) ? Math.round(n) : null);
   // The statement cycle that is open today, and how it compares with the plan.
@@ -530,6 +540,12 @@ export function snapshot(): string {
       outstandingBalance: st.creditCard?.balance ?? null,
       availableCredit: st.creditCard?.available ?? null,
     },
+    // Money on hand as entered (and the month), what is owed on bank loans now, and the projection month by month.
+    cashOnHand: st.cash,
+    loanDebtNow: loanDebtNow(st.loans, month),
+    projectedCash: st.cash
+      ? Object.fromEntries([...projectedCash(budget, st.cash, Array.from({ length: 12 }, (_, i) => shiftMonth(month, i)), credit)].map(([m, v]) => [m, v === null ? null : Math.round(v)]))
+      : null,
     accounts: st.accounts,
     netWorth: netWorth(st.accounts),
     dailySpending: {

@@ -101,7 +101,8 @@ export default function Home() {
         .sort((a, b) => b.amount - a.amount),
     [sum],
   );
-  const proj = useMemo(() => project(resolvePlan(plan, budget, accounts, month)), [plan, budget, accounts, month]);
+  const cash = useStore((s) => s.cash);
+  const proj = useMemo(() => project(resolvePlan(plan, budget, accounts, month, cash)), [plan, budget, accounts, month, cash]);
   const lastRow = proj.rows[proj.rows.length - 1];
 
   const metric = (k: MetricKey): string => {

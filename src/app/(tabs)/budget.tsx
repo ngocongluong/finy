@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet } from '../../components/sheets';
+import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, flowTable, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, flowTable, loanDebtNow, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, monthFlow, netWorth } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -58,6 +58,12 @@ export default function Budget() {
   const cycleMonth = cycleMonthOf(dateKey(), statementDay);
 
   const rows = useMemo(() => flowTable(budget, start, count, credit), [budget, credit, start, count]);
+  // Money on hand now, what is owed on loans, and the money expected at the end of each month.
+  const cash = useStore((s) => s.cash);
+  const setCash = useStore((s) => s.setCash);
+  const [cashOpen, setCashOpen] = useState(false);
+  const debt = useMemo(() => loanDebtNow(budget.loans, now), [budget.loans, now]);
+  const projected = useMemo(() => projectedCash(budget, cash, rows.map((r) => r.month), credit), [budget, cash, rows, credit]);
   const total = useMemo(() => netWorth(accounts), [accounts]);
   const last = rows[rows.length - 1];
   const sumIn = rows.reduce((s, r) => s + r.income, 0);
@@ -94,6 +100,32 @@ export default function Budget() {
             </Card>
           ) : null}
 
+          <Card eye={'budget.summary'} style={{ gap: 10 }}>
+            <Pressable onPress={() => setCashOpen(true)} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+              <Row>
+                <View>
+                  <Txt v="label">Tiền đang có</Txt>
+                  <Txt v="small">{cash ? `nhập ${monthLabel(cash.month).toLowerCase()} · chạm để sửa` : 'Chạm để nhập'}</Txt>
+                </View>
+                <Amount v="title" value={cash?.amount ?? 0} />
+              </Row>
+            </Pressable>
+            <Pressable onPress={() => setView('fixed')} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+              <Row>
+                <View>
+                  <Txt v="label">Tiền đang nợ</Txt>
+                  <Txt v="small">{budget.loans?.length ? 'dư nợ vay ngân hàng hiện tại' : 'Chưa có khoản vay — nhập ở Cố định'}</Txt>
+                </View>
+                <Amount v="title" value={debt} color={debt > 0 ? c.negative : c.text} />
+              </Row>
+            </Pressable>
+            <View style={{ height: 1, backgroundColor: c.border }} />
+            <Row>
+              <Txt v="label">Còn lại sau nợ</Txt>
+              <Amount value={(cash?.amount ?? 0) - debt} color={(cash?.amount ?? 0) - debt < 0 ? c.negative : c.positive} />
+            </Row>
+          </Card>
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
             {[6, 12].map((n) => (
               <Chip key={n} label={`${n} tháng tới`} active={period.kind === 'next' && period.months === n} onPress={() => setPeriod({ kind: 'next', months: n })} />
@@ -105,11 +137,11 @@ export default function Budget() {
 
           <Card eye={'budget.table'} style={{ gap: 2 }}>
             <Row style={{ marginBottom: 6 }}>
-              <Txt v="small" style={{ width: 66 }}>Tháng</Txt>
+              <Txt v="small" style={{ width: 54 }}>Tháng</Txt>
               <Txt v="small" style={cell}>Thu</Txt>
               <Txt v="small" style={cell}>Chi</Txt>
               <Txt v="small" style={cell}>Để dành</Txt>
-              <View style={{ width: 18 }} />
+              <Txt v="small" style={cell}>Dự kiến</Txt>
             </Row>
             {rows.map((r) => {
               const special = r.extraIn > 0 || r.extraOut > 0 || r.adjusted;
@@ -128,29 +160,31 @@ export default function Budget() {
                     backgroundColor: pressed ? c.cardAlt : 'transparent',
                   })}>
                   <Row>
-                    <View style={{ width: 66, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 54, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                       <Txt v="label" color={r.month === now ? c.text : c.muted}>{monthShort(r.month)}</Txt>
                       {special ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.accent }} /> : null}
                       {r.creditOver > 0 ? <Ionicons name="warning" size={13} color={c.negative} accessibilityLabel="Vượt dự chi tín dụng" /> : null}
                     </View>
-                    <Txt v="num" style={cell} numberOfLines={1}>{money(r.income, true)}</Txt>
-                    <Txt v="num" style={cell} numberOfLines={1}>{money(r.expense, true)}</Txt>
-                    <Txt v="num" style={cell} numberOfLines={1} color={r.saving < 0 ? c.negative : c.positive}>{money(r.saving, true)}</Txt>
-                    <Ionicons name="chevron-forward" size={16} color={c.muted} style={{ width: 18, textAlign: 'right' }} />
+                    <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{money(r.income, true)}</Txt>
+                    <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{money(r.expense, true)}</Txt>
+                    <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit color={r.saving < 0 ? c.negative : c.positive}>{money(r.saving, true)}</Txt>
+                    <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit color={(projected.get(r.month) ?? 0) < 0 ? c.negative : c.text}>
+                      {projected.get(r.month) == null ? '—' : money(projected.get(r.month)!, true)}
+                    </Txt>
                   </Row>
                 </Pressable>
               );
             })}
             <View style={{ height: 1, backgroundColor: c.border, marginVertical: 8 }} />
             <Row>
-              <Txt v="label" style={{ width: 66 }}>{period.kind === 'year' ? `Cả ${period.year}` : 'Tổng'}</Txt>
+              <Txt v="label" style={{ width: 54 }} numberOfLines={1} adjustsFontSizeToFit>{period.kind === 'year' ? `Cả ${period.year}` : 'Tổng'}</Txt>
               <Txt v="num" style={cell} numberOfLines={1}>{money(sumIn, true)}</Txt>
               <Txt v="num" style={cell} numberOfLines={1}>{money(sumOut, true)}</Txt>
-              <Txt v="num" style={cell} numberOfLines={1} color={last.cumulative < 0 ? c.negative : c.positive}>{money(last.cumulative, true)}</Txt>
-              <View style={{ width: 18 }} />
+              <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit color={last.cumulative < 0 ? c.negative : c.positive}>{money(last.cumulative, true)}</Txt>
+              <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{projected.get(last.month) == null ? '—' : money(projected.get(last.month)!, true)}</Txt>
             </Row>
             <Txt v="small" style={{ marginTop: 8 }}>
-              Chạm một tháng để xem và sửa chi tiết thu, chi của tháng đó. Chấm tròn = tháng có khoản phát sinh hoặc số tiền chỉnh riêng.
+              Dự kiến = tiền đang có + để dành cộng dồn đến cuối tháng đó (tính từ tháng nhập tiền đang có). Chạm một tháng để xem và sửa chi tiết thu, chi của tháng đó. Chấm tròn = tháng có khoản phát sinh hoặc số tiền chỉnh riêng.
             </Txt>
           </Card>
         </>
@@ -283,6 +317,15 @@ export default function Budget() {
       <View style={{ height: gap }} />
       <FixedSheet visible={fixedSheet.open} onClose={() => setFixedSheet(null)} direction={fixedSheet.direction} item={fixedSheet.item} />
       <AccountSheet visible={account !== undefined} onClose={() => setAccount(undefined)} account={account} />
+      <NumberSheet
+        visible={cashOpen}
+        onClose={() => setCashOpen(false)}
+        title="Tiền đang có"
+        label="Tổng tiền bạn đang có"
+        hint="Dùng làm điểm xuất phát cho cột Dự kiến, tính từ tháng này."
+        value={cash?.amount ?? 0}
+        onSave={(n) => setCash(n ?? 0)}
+      />
       <CreditPlanSheet visible={planOpen} onClose={() => setPlanOpen(false)} />
       <LoanSheet visible={loan.open} onClose={() => setLoan((v) => ({ ...v, open: false }))} item={loan.item} />
       <InstalmentSheet visible={inst.open} onClose={() => setInst((v) => ({ ...v, open: false }))} item={inst.item} defaultStart={cycleMonth} />

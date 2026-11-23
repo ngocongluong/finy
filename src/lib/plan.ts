@@ -1,5 +1,5 @@
 // Long-range projection (5-10 years). Pure functions, monthly simulation.
-import { loanBalance, loanPaidBefore, loanPayment, monthFlow, netWorth, type Budget } from './finance';
+import { loanBalance, loanDebtNow, loanPaidBefore, loanPayment, monthFlow, netWorth, type Budget } from './finance';
 import { shiftMonth } from './format';
 import type { Account, PlanDebt, PlanGoal, PlanParams } from './types';
 
@@ -38,7 +38,13 @@ export interface PlanInputs {
  * fixed incomes, fixed expenses, loan repayments, and everything that makes a
  * particular month differ from the usual one (one-offs and per-month adjustments).
  */
-export function resolvePlan(plan: PlanParams, budget: Budget, accounts: Account[], currentMonth: string): PlanInputs {
+export function resolvePlan(
+  plan: PlanParams,
+  budget: Budget,
+  accounts: Account[],
+  currentMonth: string,
+  cash: { amount: number } | null = null,
+): PlanInputs {
   const { fixed, oneOffs, overrides } = budget;
   const base = monthFlow({ fixed, oneOffs: [], overrides: {} }, currentMonth);
   const fixedDebts: PlanDebt[] = fixed
@@ -72,7 +78,8 @@ export function resolvePlan(plan: PlanParams, budget: Budget, accounts: Account[
 
   return {
     years,
-    startNetWorth: plan.startNetWorth ?? netWorth(accounts),
+    // Accounts when the user keeps them; otherwise money on hand minus what is owed on bank loans.
+    startNetWorth: plan.startNetWorth ?? (accounts.length || !cash ? netWorth(accounts) : cash.amount - loanDebtNow(budget.loans, currentMonth)),
     monthlyIncome: plan.monthlyIncome ?? base.fixedIn,
     monthlyExpense: plan.monthlyExpense ?? base.fixedOut - base.debtPayment,
     incomeGrowthPct: plan.incomeGrowthPct,

@@ -230,8 +230,16 @@ export interface AppSettings {
   apiKeyOverride: string | null;
 }
 
+/** Money the user has now, as entered, and the month it was entered (the projection starts there). */
+export interface CashOnHand {
+  amount: number;
+  month: string; // YYYY-MM
+}
+
 /** First-run data bundled at build time from secrets/seed.json. */
 export interface Seed {
+  /** Money on hand; applied once when the app has none yet. */
+  cashOnHand?: number;
   fixed?: Omit<FixedItem, 'id'>[];
   oneOffs?: Omit<OneOff, 'id'>[];
   accounts?: { name: string; kind: AccountKind; balance: number }[];
