@@ -105,6 +105,7 @@ export function normalizeLoan(raw: unknown): Loan {
       ratePct: Math.min(100, Math.max(0, Number(p.ratePct) || 0)),
       prepayment: first ? 0 : Math.max(0, Math.round(Number(p.prepayment) || 0)),
       paymentOverride: !payOff && p.paymentOverride && p.paymentOverride > 0 ? Math.round(p.paymentOverride) : null,
+      ...(!payOff && Number(p.actualPayment) > 0 ? { actualPayment: Math.round(Number(p.actualPayment)) } : {}),
       ...(payOff ? { payOff: true } : {}),
     });
     // Nothing is owed once the loan is paid off: later periods have nothing to change.
@@ -127,6 +128,9 @@ export interface LoanMonth {
   /** Owed at the start of the month, after any prepayment. */
   opening: number;
   interest: number;
+  /** What the bank charges this month: the period's payment (what is left, in the last month). */
+  bank: number;
+  /** What is paid this month: the bank's payment, or what the user pays when that is more. */
   payment: number;
   /** Owed after this month's payment. */
   closing: number;
@@ -137,8 +141,9 @@ const scheduleCache = new WeakMap<Loan, LoanMonth[]>();
 /**
  * The whole repayment schedule, month by month. When a period starts, its
  * prepayment comes off the balance and the payment is recalculated over the
- * months left (or taken from the bank's figure). The last payment clears what
- * rounding left.
+ * months left (or taken from the bank's figure). Paying more than the bank
+ * asks takes the extra off the principal; the bank's payment stays the same
+ * until the next period. The last payment clears what rounding left.
  */
 export function loanSchedule(loan: Loan): LoanMonth[] {
   const cached = scheduleCache.get(loan);
@@ -149,6 +154,7 @@ export function loanSchedule(loan: Loan): LoanMonth[] {
   let pi = -1;
   let rate = 0;
   let payment = 0;
+  let actual = 0;
   for (let k = 0; k < l.months; k++) {
     const month = shiftMonth(l.startMonth, k);
     let prepayment = 0;
@@ -164,11 +170,14 @@ export function loanSchedule(loan: Loan): LoanMonth[] {
       }
       rate = p.ratePct / 100 / 12;
       payment = p.paymentOverride ?? annuityPayment(balance, p.ratePct, l.months - k);
+      actual = p.actualPayment ?? 0;
     }
     const interest = Math.round(balance * rate);
     const due = balance + interest;
-    const paid = k === l.months - 1 ? due : Math.min(payment, due);
-    out.push({ month, part: k + 1, period: pi, prepayment, ...(payOff ? { payOff } : {}), opening: balance, interest, payment: paid, closing: due - paid });
+    const bank = k === l.months - 1 ? due : Math.min(payment, due);
+    // Less than the bank asks is still the bank's payment; more pays the principal down faster.
+    const paid = Math.min(due, Math.max(bank, actual));
+    out.push({ month, part: k + 1, period: pi, prepayment, ...(payOff ? { payOff } : {}), opening: balance, interest, bank, payment: paid, closing: due - paid });
     balance = due - paid;
   }
   scheduleCache.set(loan, out);
@@ -237,10 +246,13 @@ export interface LoanPeriodSummary {
   prepayment: number;
   /** Owed when the period starts, after its prepayment: the amount the period repays. */
   principal: number;
+  /** The bank's monthly payment in the period. */
   payment: number;
   /** The payment as calculated, whatever the bank's figure. */
   calculated: number;
   paymentOverride: number | null;
+  /** What the user pays each month when it is more than the bank's payment; null = the bank's payment. */
+  actualPayment: number | null;
   /** The period pays off everything owed when it starts. */
   payOff: boolean;
 }
@@ -261,9 +273,10 @@ export function loanPeriods(loan: Loan): LoanPeriodSummary[] {
       carried: first.opening + first.prepayment,
       prepayment: first.prepayment,
       principal: first.opening,
-      payment: first.payment,
+      payment: first.bank,
       calculated: annuityPayment(first.opening, p.ratePct, left),
       paymentOverride: p.paymentOverride,
+      actualPayment: p.actualPayment ?? null,
       payOff: !!p.payOff,
     };
   });
@@ -437,6 +450,8 @@ export interface Line {
   base?: number;
   /** For fixed items: this month uses its own amount instead of the usual one. */
   overridden?: boolean;
+  /** For bank loans: what the bank charges, when the user pays more (amount). */
+  bank?: number;
   kind?: FixedItem['kind'];
   daily?: boolean;
   onCard?: boolean;
@@ -558,7 +573,8 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
       const tag = e.payOff ? 'payoff' : 'prepay';
       loanLines.push({ source: 'loan', id: `${l.id}#${tag}`, name: `${e.payOff ? 'Tất toán' : 'Trả trước'}: ${l.name}`, amount: e.prepayment, kind: 'debt' });
     }
-    if (e.payment > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.payment, kind: 'debt' });
+    // What the user pays is the expense; the bank's own payment is kept to show beside it.
+    if (e.payment > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.payment, kind: 'debt', ...(e.payment > e.bank ? { bank: e.bank } : {}) });
   }
   const fixedOut = total(fixedOutLines) + total(loanLines);
   const extraIn = total(extraInLines);
@@ -591,6 +607,69 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
     onCardLines,
     instalmentLines: instLines,
   };
+}
+
+// ---- expenses ticked off as paid ----
+
+/** The key a month's expense line is ticked off by (stable across months and edits). */
+export function lineKey(l: Pick<Line, 'source' | 'id'>): string {
+  return `${l.source}:${l.id}`;
+}
+
+/** The key of the credit-card line (what the card costs in the month). */
+export const CARD_KEY = 'card';
+
+/** Whether the month's expenses include a credit-card line. */
+export function hasCardLine(flow: Pick<MonthFlow, 'creditLine' | 'creditCounted'>): boolean {
+  return !!flow.creditLine || flow.creditCounted > 0;
+}
+
+/** A month's expenses as planned and as paid so far. */
+export interface PaidSummary {
+  /** All expenses of the month (dự chi). */
+  planned: number;
+  /** The expenses ticked off, at this month's amounts (đã chi). */
+  paid: number;
+  /** Planned minus paid: still to pay. */
+  left: number;
+  /** Lines ticked off / lines with an amount. */
+  count: number;
+  total: number;
+  /** Income minus planned expenses. */
+  plannedSaving: number;
+  /** Income minus what is paid. */
+  actualSaving: number;
+}
+
+export function paidSummary(flow: MonthFlow, keys: readonly string[] | undefined): PaidSummary {
+  const ticked = new Set(keys ?? []);
+  const items = [
+    ...flow.expenseLines.map((l) => ({ key: lineKey(l), amount: l.amount })),
+    ...(hasCardLine(flow) ? [{ key: CARD_KEY, amount: flow.creditCounted }] : []),
+  ].filter((i) => i.amount > 0);
+  const done = items.filter((i) => ticked.has(i.key));
+  const paid = total(done);
+  return {
+    planned: flow.expense,
+    paid,
+    left: Math.max(0, flow.expense - paid),
+    count: done.length,
+    total: items.length,
+    plannedSaving: flow.income - flow.expense,
+    actualSaving: flow.income - paid,
+  };
+}
+
+/** Ticked keys cleaned up: months as YYYY-MM, each key once, months without ticks dropped. */
+export function normalizePaid(raw: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [month, keys] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}$/.test(month) || !Array.isArray(keys)) continue;
+    const clean = [...new Set(keys.filter((k): k is string => typeof k === 'string' && k.length > 0))];
+    if (clean.length) out[month] = clean;
+  }
+  return out;
 }
 
 export interface FlowRow extends MonthFlow {

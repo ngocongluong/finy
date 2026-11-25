@@ -3,12 +3,12 @@
 import Constants from 'expo-constants';
 import { create } from 'zustand';
 import * as db from './db';
-import { fixedBase, fixedPeriodsAmountAt, markCreditItem, migrateLegacyBudget, normalizeFamilyLoan, normalizeFixedPeriods, normalizeLoan } from './finance';
+import { fixedBase, fixedPeriodsAmountAt, markCreditItem, migrateLegacyBudget, normalizeFamilyLoan, normalizeFixedPeriods, normalizeLoan, normalizePaid } from './finance';
 import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FamilyLoan, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FamilyLoan, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PaidMarks, PlanParams, Seed, Tx, UiConfig } from './types';
 
 /**
  * The address HSBC Vietnam sends card-transaction alerts from. Which senders
@@ -43,6 +43,8 @@ interface State {
   oneOffs: OneOff[];
   /** Per-month adjustments of fixed items. */
   overrides: Overrides;
+  /** Expense lines ticked off as paid, per month. */
+  paid: PaidMarks;
   /** Latest balance the bank reported for the credit card. */
   creditCard: CreditCardInfo | null;
   /** Purchases paid off on the card in monthly parts. */
@@ -72,6 +74,8 @@ interface State {
   deleteFixed: (id: string) => void;
   /** Sets a fixed item's amount for one month only; null removes the adjustment. */
   setOverride: (month: string, fixedId: string, amount: number | null) => void;
+  /** Ticks a month's expense line off as paid (key: lineKey in finance), or clears the tick. */
+  setPaid: (month: string, key: string, paid: boolean) => void;
   setCreditCard: (info: CreditCardInfo) => void;
   upsertInstalment: (p: Omit<Instalment, 'id'> & { id?: string }) => Instalment;
   deleteInstalment: (id: string) => void;
@@ -144,6 +148,7 @@ export const useStore = create<State>((set, get) => ({
   fixed: [],
   oneOffs: [],
   overrides: {},
+  paid: {},
   creditCard: null,
   instalments: [],
   loans: [],
@@ -174,11 +179,12 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, paid, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
         db.kvGet<Overrides>('overrides'),
+        db.kvGet<PaidMarks>('paid'),
         db.kvGet<CreditCardInfo>('creditCard'),
         db.kvGet<Instalment[]>('instalments'),
         db.kvGet<Loan[]>('loans'),
@@ -210,6 +216,7 @@ export const useStore = create<State>((set, get) => ({
         fixed: allFixed,
         oneOffs: oneOffs ?? seeded?.oneOffs ?? [],
         overrides: overrides ?? {},
+        paid: normalizePaid(paid),
         creditCard: creditCard ?? null,
         instalments: instalments ?? [],
         // Loans saved by older versions had one rate on the loan itself: convert to periods.
@@ -306,6 +313,17 @@ export const useStore = create<State>((set, get) => ({
     else delete overrides[month];
     set({ overrides });
     persist('overrides', overrides);
+  },
+
+  setPaid: (month, key, on) => {
+    const cur = get().paid[month] ?? [];
+    if (on === cur.includes(key)) return;
+    const keys = on ? [...cur, key] : cur.filter((k) => k !== key);
+    const paid: PaidMarks = { ...get().paid };
+    if (keys.length) paid[month] = keys;
+    else delete paid[month];
+    set({ paid });
+    persist('paid', paid);
   },
 
   setCreditCard: (info) => {
@@ -501,6 +519,7 @@ export const useStore = create<State>((set, get) => ({
       fixed: [],
       oneOffs: [],
       overrides: {},
+      paid: {},
       creditCard: null,
       instalments: [],
       loans: [],

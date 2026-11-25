@@ -936,6 +936,9 @@ interface DraftPeriod {
   prepayment: number;
   override: number | null;
   useOverride: boolean;
+  /** What the user transfers each month, when more than the bank's payment. */
+  actual: number | null;
+  useActual: boolean;
   /** Pays off everything still owed when the period starts. */
   payOff: boolean;
 }
@@ -946,8 +949,10 @@ interface DraftPeriod {
  * start, or "pay it all", which settles the loan. The monthly payment of every
  * period is recalculated from the balance owed, the rate and the months left,
  * and follows every change; the bank's own figure can be entered per period
- * and is dropped when that period's terms change. The term is set only at the
- * top: the last period always runs to its end.
+ * and is dropped when that period's terms change. What the user actually pays
+ * each month can be entered per period too: it is the month's expense, and what
+ * it pays beyond the bank's payment comes off the principal. The term is set
+ * only at the top: the last period always runs to its end.
  */
 export function LoanSheet({
   visible,
@@ -1013,6 +1018,8 @@ export function LoanSheet({
         prepayment: p.prepayment,
         override: p.paymentOverride,
         useOverride: p.paymentOverride !== null,
+        actual: p.actualPayment ?? null,
+        useActual: p.actualPayment !== undefined,
         payOff: !!p.payOff,
       })),
     );
@@ -1066,6 +1073,7 @@ export function LoanSheet({
       ratePct: Number.isFinite(rateOf(p)) ? rateOf(p) : 0,
       prepayment: i === 0 ? 0 : p.prepayment,
       paymentOverride: p.useOverride && p.override ? p.override : null,
+      ...(p.useActual && p.actual ? { actualPayment: p.actual } : {}),
       ...(i > 0 && p.payOff ? { payOff: true } : {}),
     })),
   });
@@ -1081,6 +1089,9 @@ export function LoanSheet({
   const paid = loanPaidBefore(draft, now);
   const final = valid ? loanFinalMonth(draft) : end;
   const settled = shown.length > 1 && shown[shown.length - 1].payOff;
+  // Interest saved by paying more than the bank asks: against the same loan paid at the bank's figures.
+  const atBankFigures = draft.periods.map((p) => ({ ...p, actualPayment: undefined }));
+  const interestSaved = valid && draft.periods.some((p) => p.actualPayment) ? loanTotalInterest({ ...draft, periods: atBankFigures }) - loanTotalInterest(draft) : 0;
 
   // Changing what a period repays or its rate means a new calculation: the bank's
   // old figure for that period and every later one no longer applies.
@@ -1113,7 +1124,11 @@ export function LoanSheet({
     if (from <= lastFrom) from = shiftMonth(lastFrom, 1);
     if (from > end) return;
     // Periods kept aside outside the term are dropped: the new one takes their place.
-    setPeriods([...shown, { key: nextKey.current++, from, rateText: last.rateText, prepayment: 0, override: null, useOverride: false, payOff: false }]);
+    // The user usually keeps transferring the same amount: carried into the new period.
+    setPeriods([
+      ...shown,
+      { key: nextKey.current++, from, rateText: last.rateText, prepayment: 0, override: null, useOverride: false, actual: last.actual, useActual: last.useActual, payOff: false },
+    ]);
   };
 
   // "Pay it all" settles the loan when the period starts: later periods have nothing left to repay.
@@ -1121,7 +1136,9 @@ export function LoanSheet({
     const p = shown[index];
     if (on) {
       const later = new Set(shown.slice(index + 1).map((x) => x.key));
-      setPeriods((cur) => cur.filter((x) => !later.has(x.key)).map((x) => (x.key === p.key ? { ...x, payOff: true, useOverride: false, override: null } : x)));
+      setPeriods((cur) =>
+        cur.filter((x) => !later.has(x.key)).map((x) => (x.key === p.key ? { ...x, payOff: true, useOverride: false, override: null, useActual: false } : x)),
+      );
       setNote(later.size ? `Đã bỏ ${later.size} giai đoạn sau ${monthYear(p.from)}: khoản vay đã được trả hết.` : null);
     } else {
       update(p.key, { payOff: false, prepayment: 0 });
@@ -1433,6 +1450,43 @@ export function LoanSheet({
                     onChange={(n) => update(p.key, { override: n || null })}
                   />
                 ) : null}
+                <Toggle
+                  label="Số tiền thực chi khác số ngân hàng thu"
+                  hint="Bật nếu mỗi tháng bạn chuyển vào tài khoản trả vay nhiều hơn số ngân hàng thu. Số này được tính vào chi hàng tháng; phần chuyển thêm trừ vào nợ gốc."
+                  value={p.useActual}
+                  onChange={(v) => update(p.key, { useActual: v, actual: v ? (p.actual ?? sum?.payment ?? null) : p.actual })}
+                />
+                {p.useActual ? (
+                  <>
+                    <AmountField
+                      key={`a${key}-${p.key}`}
+                      label="Số tiền thực chi mỗi tháng"
+                      value={p.actual ?? sum?.payment ?? 0}
+                      onChange={(n) => update(p.key, { actual: n || null })}
+                    />
+                    {sum ? (
+                      <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 10, gap: 4 }}>
+                        {(p.actual ?? 0) > sum.payment ? (
+                          <>
+                            <Row style={{ gap: 12 }}>
+                              <Txt v="label" style={{ flex: 1 }}>Trả thêm vào gốc mỗi tháng</Txt>
+                              <Txt v="heading" color={c.positive}>
+                                {money((p.actual ?? 0) - sum.payment)}
+                              </Txt>
+                            </Row>
+                            <Txt v="small">
+                              Ngân hàng vẫn thu {money(sum.payment)}/tháng. Bảng thu chi tính {money(p.actual ?? 0)}/tháng; phần chuyển thêm trừ vào nợ gốc nên dư nợ giảm nhanh hơn.
+                            </Txt>
+                          </>
+                        ) : (
+                          <Txt v="small" color={c.warning}>
+                            Chưa nhiều hơn số ngân hàng thu ({money(sum.payment)}): Finy vẫn tính theo số ngân hàng thu.
+                          </Txt>
+                        )}
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
               </>
             )}
           </View>
@@ -1448,6 +1502,12 @@ export function LoanSheet({
             <Txt v="small">Tổng lãi cả khoản vay</Txt>
             <Txt v="small">{money(loanTotalInterest(draft))}</Txt>
           </Row>
+          {interestSaved > 0 ? (
+            <Row>
+              <Txt v="small" color={c.positive}>Bớt lãi nhờ trả thêm</Txt>
+              <Txt v="small" color={c.positive}>{money(interestSaved)}</Txt>
+            </Row>
+          ) : null}
           {paid > 0 && paid < months ? (
             <Row>
               <Txt v="small">

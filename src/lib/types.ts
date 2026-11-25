@@ -76,6 +76,14 @@ export interface LoanPeriod {
    */
   paymentOverride: number | null;
   /**
+   * What the user actually pays each month of the period (what they transfer
+   * to the loan account), when it is more than the bank's payment. It is the
+   * month's expense, and everything it pays beyond the interest comes off the
+   * principal, so the loan is repaid sooner. The bank's payment for the period
+   * stays as calculated. Absent = the bank's payment.
+   */
+  actualPayment?: number;
+  /**
    * Everything still owed is paid at the start of the period (the loan is
    * settled; `prepayment` then records that amount). Never on the first
    * period; no period follows one.
@@ -138,6 +146,9 @@ export interface Instalment {
  * amount to use in that month instead of the item's usual amount (0 = skipped).
  */
 export type Overrides = Record<string, Record<string, number>>;
+
+/** Expenses ticked off as paid: paid[month] = keys of that month's lines (see lineKey in finance). */
+export type PaidMarks = Record<string, string[]>;
 
 /** What the bank's latest card email says about the credit card. */
 export interface CreditCardInfo {

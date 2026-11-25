@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, debtNow, familyLoanDueMonth, familyLoanInterest, fixedActive, flowTable, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth } from '../../lib/finance';
+import { cycleMonthOf, debtNow, familyLoanDueMonth, familyLoanInterest, fixedActive, flowTable, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanMonth, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth, paidSummary } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -77,6 +77,16 @@ export default function Budget() {
   const cycleMonth = cycleMonthOf(dateKey(), statementDay);
 
   const rows = useMemo(() => flowTable(budget, start, count, credit), [budget, credit, start, count]);
+  // Months whose expenses are all ticked off as paid (in the month's detail).
+  const paidMarks = useStore((s) => s.paid);
+  const allPaid = useMemo(() => {
+    const done = new Set<string>();
+    for (const r of rows) {
+      const p = paidSummary(r, paidMarks[r.month]);
+      if (p.total > 0 && p.count === p.total) done.add(r.month);
+    }
+    return done;
+  }, [rows, paidMarks]);
   // Money on hand now, what is owed on loans, and the money expected at the end of each month.
   const cash = useStore((s) => s.cash);
   const setCash = useStore((s) => s.setCash);
@@ -176,6 +186,7 @@ export default function Budget() {
             </Row>
             {rows.map((r) => {
               const special = r.extraIn > 0 || r.extraOut > 0 || r.adjusted;
+              const done = allPaid.has(r.month);
               return (
                 <Pressable
                   key={r.month}
@@ -194,10 +205,11 @@ export default function Budget() {
                     <View style={{ width: 54 }}>
                       <Txt v="label" numberOfLines={1} color={r.month === now ? c.text : c.muted}>{monthShort(r.month)}</Txt>
                       {/* Markers go under the month so they never run into the first amount column. */}
-                      {special || r.creditOver > 0 ? (
+                      {special || r.creditOver > 0 || done ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
                           {special ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.accent }} /> : null}
                           {r.creditOver > 0 ? <Ionicons name="warning" size={11} color={c.negative} accessibilityLabel="Vượt dự chi tín dụng" /> : null}
+                          {done ? <Ionicons name="checkmark-circle" size={11} color={c.positive} accessibilityLabel="Đã chi xong" /> : null}
                         </View>
                       ) : null}
                     </View>
@@ -220,7 +232,7 @@ export default function Budget() {
               <Txt v="num" style={cell} numberOfLines={1} adjustsFontSizeToFit>{projected.get(last.month) == null ? '—' : money(projected.get(last.month)!, true)}</Txt>
             </Row>
             <Txt v="small" style={{ marginTop: 8 }}>
-              Dự kiến = tiền đang có + để dành cộng dồn đến cuối tháng đó (tính từ tháng nhập tiền đang có). Chạm một tháng để xem và sửa chi tiết thu, chi của tháng đó. Chấm tròn = tháng có khoản phát sinh hoặc số tiền chỉnh riêng.
+              Dự kiến = tiền đang có + để dành cộng dồn đến cuối tháng đó (tính từ tháng nhập tiền đang có). Chạm một tháng để xem, sửa chi tiết thu, chi và đánh dấu khoản đã chi. Chấm tròn = tháng có khoản phát sinh hoặc số tiền chỉnh riêng; dấu tick xanh = đã chi xong mọi khoản.
             </Txt>
           </HideScope>
           </Card>
@@ -303,8 +315,11 @@ export default function Budget() {
               const running = loanPart(l, now) !== null && now <= final;
               const rate = loanPeriodAt(l, now).ratePct;
               const extra = early ? ` · tất toán ${monthLabel(final).toLowerCase()}` : l.periods.length > 1 ? ` · ${l.periods.length} giai đoạn` : '';
+              // Paying more than the bank asks: the amount shown is what is paid; the bank's figure beside it.
+              const e = loanMonth(l, now);
+              const bank = e && e.payment > e.bank ? ` · ngân hàng thu ${money(e.bank, true)}` : '';
               const sub = running
-                ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${extra}`
+                ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${bank}${extra}`
                 : now < l.startMonth
                   ? `Bắt đầu trả ${monthLabel(l.startMonth).toLowerCase()}`
                   : early

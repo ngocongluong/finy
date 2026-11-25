@@ -1,12 +1,13 @@
 // One month in detail: income and expenses as two separate sections, every
-// line editable, plus the credit-card cycle that closes in this month.
+// line editable and every expense can be ticked off as paid, plus the
+// credit-card cycle that closes in this month.
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { CreditPlanSheet, LoanSheet, MonthLineSheet, OneOffSheet, periodLabel, TxSheet } from '../../components/sheets';
 import { Amount, Btn, Card, IconBtn, Meter, Row, Screen, secret, Txt, useMoney, useUi } from '../../components/ui';
-import { creditCycle, debtAtEnd, fixedPeriodAt, monthFlow, projectedCash, type Line } from '../../lib/finance';
+import { CARD_KEY, creditCycle, debtAtEnd, fixedPeriodAt, lineKey, monthFlow, paidSummary, projectedCash, type Line } from '../../lib/finance';
 import { dateKey, fmtPct, fmtTime, monthKey, monthLabel, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -38,6 +39,11 @@ export default function MonthDetail() {
   const [tx, setTx] = useState<Tx | undefined>(undefined);
 
   const flow = useMemo(() => monthFlow(budget, month, credit), [budget, credit, month]);
+  // Expenses ticked off as paid: planned against paid, and what is set aside either way.
+  const paidKeys = useStore((s) => s.paid[month]);
+  const setPaid = useStore((s) => s.setPaid);
+  const sum = useMemo(() => paidSummary(flow, paidKeys), [flow, paidKeys]);
+  const ticked = useMemo(() => new Set(paidKeys ?? []), [paidKeys]);
   // Where things stand at the end of the month: the money expected (as in the table's
   // "Dự kiến" column), what is still owed on bank loans after this month's payment, and the difference.
   const cash = useStore((s) => s.cash);
@@ -91,6 +97,8 @@ export default function MonthDetail() {
       if (l.id.endsWith('#receive')) return 'Vay người thân · tiền nhận được';
       if (l.id.endsWith('#payoff')) return 'Trả hết dư nợ · kết thúc khoản vay';
       if (l.id.endsWith('#prepay')) return 'Trả trước khoản vay · đầu giai đoạn mới';
+      // Paying more than the bank asks: the extra goes to the principal.
+      if (l.bank !== undefined) return `Vay ngân hàng · thực chi · ngân hàng thu ${money(l.bank, true)}`;
       return 'Vay ngân hàng · trả góp đều';
     }
     if (l.overridden) return `Chỉnh riêng tháng này · thường ${money(l.base ?? 0, true)}`;
@@ -101,19 +109,36 @@ export default function MonthDetail() {
     return 'Cố định';
   };
 
-  const renderLine = (l: Line, positive?: boolean) => (
+  // The round box in front of an expense: tapped, the expense is marked paid this month (or not).
+  const tick = (key: string, name: string) => {
+    const on = ticked.has(key);
+    return (
+      <Pressable
+        onPress={() => setPaid(month, key, !on)}
+        hitSlop={6}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: on }}
+        accessibilityLabel={`${name}: ${on ? 'đã chi' : 'chưa chi'}. Chạm để đổi.`}
+        style={{ width: 34, height: 44, justifyContent: 'center' }}>
+        <Ionicons name={on ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={on ? c.positive : c.muted} />
+      </Pressable>
+    );
+  };
+
+  const renderLine = (l: Line, opts: { positive?: boolean; tick?: boolean } = {}) => (
     <Pressable
       key={`${l.source}-${l.id}`}
       onPress={() => openLine(l)}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 52, justifyContent: 'center' })}>
       <Row>
+        {opts.tick ? tick(lineKey(l), l.name) : null}
         <View style={{ flex: 1, marginRight: 12 }}>
           <Txt numberOfLines={1}>{l.name}</Txt>
           <Txt v="small" color={l.overridden ? c.accent : c.muted}>
             {lineSub(l)}
           </Txt>
         </View>
-        <Amount value={l.amount} color={positive ? c.positive : c.text} />
+        <Amount value={l.amount} color={opts.positive ? c.positive : c.text} />
         <Ionicons name="chevron-forward" size={16} color={c.muted} style={{ marginLeft: 6 }} />
       </Row>
     </Pressable>
@@ -131,11 +156,34 @@ export default function MonthDetail() {
       }>
       <Card eye={'month.summary'} style={{ gap: 10 }}>
         <Row><Txt v="label">Tổng thu</Txt><Amount value={flow.income} /></Row>
-        <Row><Txt v="label">Tổng chi</Txt><Amount value={flow.expense} /></Row>
+        <Row><Txt v="label">Dự chi</Txt><Amount value={sum.planned} /></Row>
+        <Row style={{ gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Txt v="label">Đã chi</Txt>
+            <Txt v="small">
+              {sum.total === 0
+                ? 'chưa có khoản chi'
+                : sum.count === sum.total
+                  ? `đã chi xong ${sum.total} khoản`
+                  : `${sum.count}/${sum.total} khoản · còn ${money(sum.left, true)} chưa chi`}
+            </Txt>
+          </View>
+          <Amount value={sum.paid} color={sum.total > 0 && sum.count === sum.total ? c.positive : c.text} />
+        </Row>
         <View style={{ height: 1, backgroundColor: c.border }} />
-        <Row>
-          <Txt v="heading">{flow.saving < 0 ? 'Thiếu hụt' : 'Để dành được'}</Txt>
-          <Amount v="title" value={Math.abs(flow.saving)} color={flow.saving < 0 ? c.negative : c.positive} />
+        <Row style={{ gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Txt v="heading">{sum.plannedSaving < 0 ? 'Dự kiến thiếu' : 'Dự kiến để dành'}</Txt>
+            <Txt v="small">thu − dự chi</Txt>
+          </View>
+          <Amount v="title" value={Math.abs(sum.plannedSaving)} color={sum.plannedSaving < 0 ? c.negative : c.positive} />
+        </Row>
+        <Row style={{ gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Txt v="heading">{sum.actualSaving < 0 ? 'Thực tế thiếu' : 'Thực tế để dành'}</Txt>
+            <Txt v="small">thu − các khoản đã chi</Txt>
+          </View>
+          <Amount v="title" value={Math.abs(sum.actualSaving)} color={sum.actualSaving < 0 ? c.negative : c.positive} />
         </Row>
         <View style={{ gap: 6 }}>
           <Row>
@@ -198,7 +246,7 @@ export default function MonthDetail() {
           <Amount value={flow.income} color={c.positive} />
         </Row>
         {flow.incomeLines.length === 0 ? <Txt v="label">Chưa có khoản thu nào trong tháng này.</Txt> : null}
-        {flow.incomeLines.map((l) => renderLine(l, true))}
+        {flow.incomeLines.map((l) => renderLine(l, { positive: true }))}
         <Btn label="Thêm khoản thu tháng này" icon="add" kind="ghost" style={{ marginTop: 8 }} onPress={() => setOneOff({ open: true, item: null, direction: 'in' })} />
       </Card>
 
@@ -211,13 +259,18 @@ export default function MonthDetail() {
           </View>
           <Amount value={flow.expense} />
         </Row>
-        {flow.expenseLines.length === 0 && !flow.creditCounted ? <Txt v="label">Chưa có khoản chi nào trong tháng này.</Txt> : null}
-        {flow.expenseLines.map((l) => renderLine(l))}
+        {flow.expenseLines.length === 0 && !flow.creditCounted ? (
+          <Txt v="label">Chưa có khoản chi nào trong tháng này.</Txt>
+        ) : sum.count === 0 ? (
+          <Txt v="small" style={{ marginBottom: 4 }}>Chạm vòng tròn trước mỗi khoản để đánh dấu đã chi.</Txt>
+        ) : null}
+        {flow.expenseLines.map((l) => renderLine(l, { tick: true }))}
         {flow.creditLine || flow.creditCounted > 0 ? (
           <Pressable
             onPress={() => router.push(`/credit?month=${month}`)}
             style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 52, justifyContent: 'center' })}>
             <Row>
+              {tick(CARD_KEY, 'Thẻ tín dụng')}
               <View style={{ flex: 1, marginRight: 12 }}>
                 <Txt numberOfLines={1}>Thẻ tín dụng · kỳ {shortDate(cycle.start)} – {shortDate(cycle.end)}</Txt>
                 <Txt v="small" color={flow.creditOver > 0 ? c.negative : flow.creditClosed ? c.positive : c.muted}>
