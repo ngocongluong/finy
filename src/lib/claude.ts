@@ -760,6 +760,40 @@ export function snapshot(): string {
 
 type Params = Anthropic.Beta.BetaMessageParam;
 
+/**
+ * Identifies the system prompt and tools a conversation runs with. Every
+ * thinking block in the history is bound to the ones it was produced with:
+ * once an app update changes either, sending those blocks back is a 400
+ * ("Invalid signature in thinking block").
+ */
+function promptKey(tools: unknown[]): string {
+  const text = `${MODEL}\n${SYSTEM}\n${JSON.stringify(tools)}`;
+  // FNV-1a, 32-bit: only has to tell versions apart.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${text.length}-${(h >>> 0).toString(16)}`;
+}
+
+/**
+ * The history without its thinking blocks (removing all of them is allowed);
+ * text, tool calls and tool results stay, so Finy still knows the conversation.
+ */
+function withoutThinking(history: Params[]): Params[] {
+  const out: Params[] = [];
+  for (const m of history) {
+    if (m.role !== 'assistant' || typeof m.content === 'string') {
+      out.push(m);
+      continue;
+    }
+    const content = m.content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+    if (content.length) out.push({ ...m, content });
+  }
+  return out;
+}
+
 let busy = false;
 export const isBusy = () => busy;
 
@@ -770,22 +804,29 @@ export async function sendToFiny(text: string): Promise<void> {
   const store = useStore.getState();
   const userMsg: ChatMsg = { id: uid(), role: 'user', text };
   const chat = [...store.chat, userMsg];
-  const history = store.apiHistory as Params[];
   useStore.setState({ chat });
 
   const actions: string[] = [];
+  const tools = buildTools((a) => actions.push(a));
+  // After an app update changed the system prompt or the tools, the old thinking blocks
+  // can no longer be sent back: keep the conversation, drop its thinking.
+  const key = promptKey(tools);
+  const stored = store.apiHistory as Params[];
+  const history = stored.length && store.apiHistoryKey !== key ? withoutThinking(stored) : stored;
   try {
     const runner = client().beta.messages.toolRunner({
       model: MODEL,
       max_tokens: 16000,
-      thinking: { type: 'adaptive' },
+      // Should a thinking block still not match its conversation, the API drops it
+      // (and the ones after it) for this request instead of failing.
+      thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
       output_config: { effort: 'medium' },
       // If a safety classifier declines a request, the API retries it on a fallback model.
-      betas: ['server-side-fallback-2026-07-01'],
+      betas: ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01'],
       fallbacks: 'default',
       cache_control: { type: 'ephemeral' },
       system: SYSTEM,
-      tools: buildTools((a) => actions.push(a)),
+      tools,
       max_iterations: 10,
       messages: [
         ...history,
@@ -810,12 +851,14 @@ export async function sendToFiny(text: string): Promise<void> {
       [...chat, { id: uid(), role: 'assistant', text: reply, actions: actions.length ? actions : undefined }],
       // A refused turn is not replayed: the next question starts from the history before it.
       final.stop_reason === 'refusal' ? history : next,
+      key,
     );
   } catch (e) {
     // Changes made by tools before the failure are real, so still show them.
     useStore.getState().setChat(
       [...chat, { id: uid(), role: 'assistant', text: describeError(e), actions: actions.length ? actions : undefined, error: true }],
       history,
+      key,
     );
   } finally {
     busy = false;

@@ -62,6 +62,8 @@ interface State {
   chat: ChatMsg[];
   /** Full Messages API history (opaque here; owned by claude.ts). */
   apiHistory: unknown[];
+  /** Which system prompt and tools apiHistory was produced with (owned by claude.ts). */
+  apiHistoryKey: string | null;
   /** A question queued by another screen for the chat tab to send. */
   pendingPrompt: string | null;
 
@@ -102,7 +104,7 @@ interface State {
   resetUi: () => void;
   setSettings: (patch: Partial<AppSettings>) => void;
 
-  setChat: (chat: ChatMsg[], apiHistory: unknown[]) => void;
+  setChat: (chat: ChatMsg[], apiHistory: unknown[], apiHistoryKey: string) => void;
   clearChat: () => void;
   setPendingPrompt: (p: string | null) => void;
   wipe: () => Promise<void>;
@@ -160,6 +162,7 @@ export const useStore = create<State>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   chat: [],
   apiHistory: [],
+  apiHistoryKey: null,
   pendingPrompt: null,
 
   boot: async () => {
@@ -179,7 +182,7 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, paid, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, paid, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, apiHistoryKey, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
@@ -197,6 +200,7 @@ export const useStore = create<State>((set, get) => ({
         db.kvGet<AppSettings>('settings'),
         db.kvGet<ChatMsg[]>('chat'),
         db.kvGet<unknown[]>('apiHistory'),
+        db.kvGet<string>('apiHistoryKey'),
         db.txAll(),
       ]);
       // Three starting points: this model's own data, data from the older
@@ -228,6 +232,7 @@ export const useStore = create<State>((set, get) => ({
         settings: mergedSettings,
         chat: chat ?? [],
         apiHistory: apiHistory ?? [],
+        apiHistoryKey: apiHistoryKey ?? null,
         txs,
         revealed: [],
       });
@@ -497,10 +502,11 @@ export const useStore = create<State>((set, get) => ({
     persist('settings', settings);
   },
 
-  setChat: (chat, apiHistory) => {
-    set({ chat, apiHistory });
+  setChat: (chat, apiHistory, apiHistoryKey) => {
+    set({ chat, apiHistory, apiHistoryKey });
     persist('chat', chat);
     persist('apiHistory', apiHistory);
+    persist('apiHistoryKey', apiHistoryKey);
   },
 
   clearChat: () => {
