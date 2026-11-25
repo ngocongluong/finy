@@ -128,10 +128,13 @@ export interface LoanMonth {
   /** Owed at the start of the month, after any prepayment. */
   opening: number;
   interest: number;
-  /** What the bank charges this month: the period's payment (what is left, in the last month). */
-  bank: number;
-  /** What is paid this month: the bank's payment, or what the user pays when that is more. */
+  /** The bank's payment this month: the period's payment (what is left, in the last month). */
   payment: number;
+  /**
+   * What the user spends on the loan this month: the payment, or what they
+   * transfer when that is more. The extra does not reduce the balance.
+   */
+  spend: number;
   /** Owed after this month's payment. */
   closing: number;
 }
@@ -141,9 +144,9 @@ const scheduleCache = new WeakMap<Loan, LoanMonth[]>();
 /**
  * The whole repayment schedule, month by month. When a period starts, its
  * prepayment comes off the balance and the payment is recalculated over the
- * months left (or taken from the bank's figure). Paying more than the bank
- * asks takes the extra off the principal; the bank's payment stays the same
- * until the next period. The last payment clears what rounding left.
+ * months left (or taken from the bank's figure). The last payment clears what
+ * rounding left. What the user transfers beyond the payment is spent, never
+ * taken off the balance.
  */
 export function loanSchedule(loan: Loan): LoanMonth[] {
   const cached = scheduleCache.get(loan);
@@ -174,10 +177,10 @@ export function loanSchedule(loan: Loan): LoanMonth[] {
     }
     const interest = Math.round(balance * rate);
     const due = balance + interest;
-    const bank = k === l.months - 1 ? due : Math.min(payment, due);
-    // Less than the bank asks is still the bank's payment; more pays the principal down faster.
-    const paid = Math.min(due, Math.max(bank, actual));
-    out.push({ month, part: k + 1, period: pi, prepayment, ...(payOff ? { payOff } : {}), opening: balance, interest, bank, payment: paid, closing: due - paid });
+    const paid = k === l.months - 1 ? due : Math.min(payment, due);
+    // Spent on the loan: at least the bank's payment, more when the user transfers more (not once it is repaid).
+    const spend = paid > 0 ? Math.max(paid, actual) : 0;
+    out.push({ month, part: k + 1, period: pi, prepayment, ...(payOff ? { payOff } : {}), opening: balance, interest, payment: paid, spend, closing: due - paid });
     balance = due - paid;
   }
   scheduleCache.set(loan, out);
@@ -193,6 +196,11 @@ export function loanMonth(l: Loan, month: string): LoanMonth | null {
 /** The payment due in `month` (default: the first payment). 0 outside the term. */
 export function loanPayment(l: Loan, month: string = l.startMonth): number {
   return loanMonth(l, month)?.payment ?? 0;
+}
+
+/** What the user spends on the loan in `month`: the bank's payment or their own larger amount. 0 outside the term. */
+export function loanSpend(l: Loan, month: string): number {
+  return loanMonth(l, month)?.spend ?? 0;
 }
 
 /** Which payment of the loan falls in a month (1-based), or null when none does. */
@@ -251,7 +259,7 @@ export interface LoanPeriodSummary {
   /** The payment as calculated, whatever the bank's figure. */
   calculated: number;
   paymentOverride: number | null;
-  /** What the user pays each month when it is more than the bank's payment; null = the bank's payment. */
+  /** What the user spends each month when it is more than the bank's payment; null = the bank's payment. */
   actualPayment: number | null;
   /** The period pays off everything owed when it starts. */
   payOff: boolean;
@@ -273,7 +281,7 @@ export function loanPeriods(loan: Loan): LoanPeriodSummary[] {
       carried: first.opening + first.prepayment,
       prepayment: first.prepayment,
       principal: first.opening,
-      payment: first.bank,
+      payment: first.payment,
       calculated: annuityPayment(first.opening, p.ratePct, left),
       paymentOverride: p.paymentOverride,
       actualPayment: p.actualPayment ?? null,
@@ -450,7 +458,7 @@ export interface Line {
   base?: number;
   /** For fixed items: this month uses its own amount instead of the usual one. */
   overridden?: boolean;
-  /** For bank loans: what the bank charges, when the user pays more (amount). */
+  /** For bank loans: the bank's payment, when the user spends more on the loan (amount). */
   bank?: number;
   kind?: FixedItem['kind'];
   daily?: boolean;
@@ -573,8 +581,8 @@ export function monthFlow(b: Budget, month: string, credit?: CreditData): MonthF
       const tag = e.payOff ? 'payoff' : 'prepay';
       loanLines.push({ source: 'loan', id: `${l.id}#${tag}`, name: `${e.payOff ? 'Tất toán' : 'Trả trước'}: ${l.name}`, amount: e.prepayment, kind: 'debt' });
     }
-    // What the user pays is the expense; the bank's own payment is kept to show beside it.
-    if (e.payment > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.payment, kind: 'debt', ...(e.payment > e.bank ? { bank: e.bank } : {}) });
+    // What the user spends is the expense; the bank's own payment is kept to show beside it.
+    if (e.spend > 0) loanLines.push({ source: 'loan', id: l.id, name: l.name, amount: e.spend, kind: 'debt', ...(e.spend > e.payment ? { bank: e.payment } : {}) });
   }
   const fixedOut = total(fixedOutLines) + total(loanLines);
   const extraIn = total(extraInLines);

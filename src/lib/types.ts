@@ -76,11 +76,11 @@ export interface LoanPeriod {
    */
   paymentOverride: number | null;
   /**
-   * What the user actually pays each month of the period (what they transfer
-   * to the loan account), when it is more than the bank's payment. It is the
-   * month's expense, and everything it pays beyond the interest comes off the
-   * principal, so the loan is repaid sooner. The bank's payment for the period
-   * stays as calculated. Absent = the bank's payment.
+   * What the user actually spends on the loan each month of the period (what
+   * they transfer to the loan account), when it is more than the bank's
+   * payment. It is the month's expense; the extra is spent too but does not
+   * reduce the balance: the bank's payment and the schedule stay as
+   * calculated. Absent = the bank's payment.
    */
   actualPayment?: number;
   /**

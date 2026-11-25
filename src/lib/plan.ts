@@ -62,12 +62,13 @@ export function resolvePlan(
             name: l.name,
             balance: loanBalance(l, loanPaidBefore(l, currentMonth)),
             ratePct: loanPeriodAt(l, currentMonth).ratePct,
-            monthlyPayment: loanMonth(l, currentMonth)?.payment ?? loanMonth(l, l.startMonth)?.payment ?? 0,
+            // What is spent on it each month (the user may transfer more than the bank's payment).
+            monthlyPayment: loanMonth(l, currentMonth)?.spend ?? loanMonth(l, l.startMonth)?.spend ?? 0,
             // Month by month from now: later periods (new rate, prepayment) are followed exactly.
             schedule: Array.from({ length: years * 12 }, (_, i) => {
               const m = shiftMonth(currentMonth, i);
               const e = loanMonth(l, m);
-              if (e) return { payment: e.payment + e.prepayment, balance: e.closing };
+              if (e) return { payment: e.spend + e.prepayment, balance: e.closing };
               return { payment: 0, balance: m < l.startMonth ? l.principal : 0 };
             }),
           }),

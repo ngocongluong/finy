@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, CARD_KEY, creditCycle, normalizePaid, paidSummary, debtAtEnd, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, CARD_KEY, creditCycle, normalizePaid, paidSummary, debtAtEnd, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanSpend, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
@@ -732,34 +732,35 @@ test('a loan from family: nothing monthly, principal and simple interest paid in
   assert.deepEqual([d.balance, d.monthlyPayment, d.schedule![23].payment, d.schedule![24].payment, d.schedule![24].balance], [500_000_000, 0, 0, 560_000_000, 0]);
 });
 
-test('paying more than the bank asks: counted as the expense, the extra comes off the principal', () => {
+test('spending more than the bank asks: the month\'s expense, the balance follows the bank\'s schedule', () => {
   const base = mkLoan({ principal: 1_200_000_000, ratePct: 6, months: 360, startMonth: '2026-11' });
   const bank = annuityPayment(1_200_000_000, 6, 360);
   const loan = normalizeLoan({ ...base, periods: [{ ...base.periods[0], actualPayment: 10_000_000 }] });
   assert.equal(loan.periods[0].actualPayment, 10_000_000);
   const first = loanMonth(loan, '2026-11')!;
-  // The bank still charges its payment; the user pays 10 million; the difference goes to the principal.
-  assert.deepEqual([first.bank, first.payment], [bank, 10_000_000]);
-  assert.equal(first.closing, 1_200_000_000 + first.interest - 10_000_000);
-  assert.equal(loanMonth(base, '2026-11')!.closing - first.closing, 10_000_000 - bank);
-  // Repaid well before the term ends, with less interest; the last payment is only what is left.
-  const final = loanFinalMonth(loan);
-  assert.ok(final < '2045-01' && final > '2036-01', final);
-  const last = loanMonth(loan, final)!;
-  assert.ok(last.payment <= 10_000_000 && last.closing === 0);
-  assert.equal(loanMonth(loan, shiftMonth(final, 1))!.payment, 0);
-  assert.ok(loanTotalInterest(loan) < loanTotalInterest(base) * 0.6);
+  // The bank still charges its payment and the balance falls by it alone; 10 million is spent.
+  assert.deepEqual([first.payment, first.spend, first.closing], [bank, 10_000_000, loanMonth(base, '2026-11')!.closing]);
+  assert.equal(loanSpend(loan, '2026-11'), 10_000_000);
+  assert.deepEqual(loanSchedule(loan).map((m) => [m.payment, m.closing]), loanSchedule(base).map((m) => [m.payment, m.closing]));
+  assert.deepEqual([loanFinalMonth(loan), loanTotalInterest(loan)], [loanFinalMonth(base), loanTotalInterest(base)]);
+  assert.equal(loanDebtNow([loan], '2027-11'), loanDebtNow([base], '2027-11'));
+  // Nothing is spent once the loan has ended.
+  assert.equal(loanSpend(loan, '2056-11'), 0);
   // The period shows the bank's payment and the user's own.
   assert.deepEqual([loanPeriods(loan)[0].payment, loanPeriods(loan)[0].actualPayment, loanPeriods(base)[0].actualPayment], [bank, 10_000_000, null]);
-  // In the month: the line is what the user pays, with the bank's figure beside it.
+  // In the month: the line is what the user spends, with the bank's figure beside it.
   const b: Budget = { fixed: [], oneOffs: [], overrides: {}, loans: [loan] };
   const line = monthFlow(b, '2026-11').expenseLines[0];
   assert.deepEqual([line.amount, line.bank], [10_000_000, bank]);
+  assert.equal(monthFlow(b, '2026-11').expense, 10_000_000);
   assert.equal(monthFlow({ ...b, loans: [base] }, '2026-11').expenseLines[0].bank, undefined);
-  assert.ok(loanDebtNow([loan], '2027-11') < loanDebtNow([base], '2027-11'));
-  // Less than the bank's payment changes nothing: the bank's payment is what is paid.
+  // Less than the bank's payment: the bank's payment is what is spent.
   const less = normalizeLoan({ ...base, periods: [{ ...base.periods[0], actualPayment: 5_000_000 }] });
-  assert.deepEqual(loanSchedule(less).map((m) => m.payment), loanSchedule(base).map((m) => m.payment));
+  assert.deepEqual(loanSchedule(less).map((m) => m.spend), loanSchedule(base).map((m) => m.payment));
+  // The long-range plan spends the larger amount and owes what the bank's schedule says.
+  const plan = resolvePlan(DEFAULT_PLAN, b, [], '2026-11');
+  const debt = plan.debts.find((d) => d.id === 'l')!;
+  assert.deepEqual([debt.monthlyPayment, debt.schedule![0].payment, debt.schedule![0].balance], [10_000_000, 10_000_000, first.closing]);
   // A period that pays the loan off has nothing monthly to pay.
   const off = normalizeLoan({ ...base, periods: [...base.periods, { from: '2027-03', ratePct: 6, prepayment: 0, paymentOverride: null, actualPayment: 9, payOff: true }] });
   assert.equal(off.periods[1].actualPayment, undefined);

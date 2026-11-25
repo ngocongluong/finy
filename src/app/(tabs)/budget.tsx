@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { ACCOUNT_KINDS, AccountSheet, CreditPlanSheet, FixedSheet, InstalmentSheet, LoanSheet, NumberSheet } from '../../components/sheets';
 import { Amount, Btn, Card, Chip, EyeToggle, HideScope, Row, Screen, Segmented, Txt, useMoney, useUi } from '../../components/ui';
-import { cycleMonthOf, debtNow, familyLoanDueMonth, familyLoanInterest, fixedActive, flowTable, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanMonth, loanPart, loanPayment, loanPeriodAt, monthFlow, netWorth, paidSummary } from '../../lib/finance';
+import { cycleMonthOf, debtNow, familyLoanDueMonth, familyLoanInterest, fixedActive, flowTable, loanEndMonth, loanFinalMonth, projectedCash, instalmentAmount, instalmentPart, loanBalance, loanPaidBefore, loanMonth, loanPart, loanPeriodAt, loanSpend, monthFlow, netWorth, paidSummary } from '../../lib/finance';
 import { dateKey, monthKey, monthLabel, monthShort, shiftMonth } from '../../lib/format';
 import { useBudget } from '../../lib/hooks';
 import { useStore } from '../../lib/store';
@@ -296,7 +296,7 @@ export default function Budget() {
               {/* Paid on loans this month: bank payments, and a family loan when it falls due now. */}
               <Amount
                 value={
-                  loans.reduce((s, l) => s + loanPayment(l, now), 0) +
+                  loans.reduce((s, l) => s + loanSpend(l, now), 0) +
                   familyLoans.reduce((s, l) => s + (familyLoanDueMonth(l) === now ? l.principal + familyLoanInterest(l) : 0), 0)
                 }
                 color={c.muted}
@@ -315,9 +315,9 @@ export default function Budget() {
               const running = loanPart(l, now) !== null && now <= final;
               const rate = loanPeriodAt(l, now).ratePct;
               const extra = early ? ` · tất toán ${monthLabel(final).toLowerCase()}` : l.periods.length > 1 ? ` · ${l.periods.length} giai đoạn` : '';
-              // Paying more than the bank asks: the amount shown is what is paid; the bank's figure beside it.
+              // Spending more than the bank asks: the amount shown is what is spent; the bank's figure beside it.
               const e = loanMonth(l, now);
-              const bank = e && e.payment > e.bank ? ` · ngân hàng thu ${money(e.bank, true)}` : '';
+              const bank = e && e.spend > e.payment ? ` · ngân hàng thu ${money(e.payment, true)}` : '';
               const sub = running
                 ? `${String(rate).replace('.', ',')}%/năm · kỳ ${paid + 1}/${l.months} · dư nợ ${money(loanBalance(l, paid), true)}${bank}${extra}`
                 : now < l.startMonth
@@ -330,7 +330,7 @@ export default function Budget() {
                   key={l.id}
                   name={l.name}
                   sub={`Ngân hàng · ${sub}`}
-                  amount={running ? loanPayment(l, now) : loanPayment(l)}
+                  amount={running ? loanSpend(l, now) : loanSpend(l, l.startMonth)}
                   color={running ? c.text : c.muted}
                   onPress={() => setLoan({ open: true, item: l, family: null })}
                 />

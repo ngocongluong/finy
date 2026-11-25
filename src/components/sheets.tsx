@@ -949,10 +949,10 @@ interface DraftPeriod {
  * start, or "pay it all", which settles the loan. The monthly payment of every
  * period is recalculated from the balance owed, the rate and the months left,
  * and follows every change; the bank's own figure can be entered per period
- * and is dropped when that period's terms change. What the user actually pays
- * each month can be entered per period too: it is the month's expense, and what
- * it pays beyond the bank's payment comes off the principal. The term is set
- * only at the top: the last period always runs to its end.
+ * and is dropped when that period's terms change. What the user actually spends
+ * on the loan each month can be entered per period too: it is the month's
+ * expense; the extra does not reduce the balance. The term is set only at the
+ * top: the last period always runs to its end.
  */
 export function LoanSheet({
   visible,
@@ -1089,9 +1089,6 @@ export function LoanSheet({
   const paid = loanPaidBefore(draft, now);
   const final = valid ? loanFinalMonth(draft) : end;
   const settled = shown.length > 1 && shown[shown.length - 1].payOff;
-  // Interest saved by paying more than the bank asks: against the same loan paid at the bank's figures.
-  const atBankFigures = draft.periods.map((p) => ({ ...p, actualPayment: undefined }));
-  const interestSaved = valid && draft.periods.some((p) => p.actualPayment) ? loanTotalInterest({ ...draft, periods: atBankFigures }) - loanTotalInterest(draft) : 0;
 
   // Changing what a period repays or its rate means a new calculation: the bank's
   // old figure for that period and every later one no longer applies.
@@ -1452,7 +1449,7 @@ export function LoanSheet({
                 ) : null}
                 <Toggle
                   label="Số tiền thực chi khác số ngân hàng thu"
-                  hint="Bật nếu mỗi tháng bạn chuyển vào tài khoản trả vay nhiều hơn số ngân hàng thu. Số này được tính vào chi hàng tháng; phần chuyển thêm trừ vào nợ gốc."
+                  hint="Bật nếu mỗi tháng bạn chuyển vào tài khoản trả vay nhiều hơn số ngân hàng thu. Số này được tính vào chi hàng tháng; dư nợ và số ngân hàng thu không đổi."
                   value={p.useActual}
                   onChange={(v) => update(p.key, { useActual: v, actual: v ? (p.actual ?? sum?.payment ?? null) : p.actual })}
                 />
@@ -1469,13 +1466,11 @@ export function LoanSheet({
                         {(p.actual ?? 0) > sum.payment ? (
                           <>
                             <Row style={{ gap: 12 }}>
-                              <Txt v="label" style={{ flex: 1 }}>Trả thêm vào gốc mỗi tháng</Txt>
-                              <Txt v="heading" color={c.positive}>
-                                {money((p.actual ?? 0) - sum.payment)}
-                              </Txt>
+                              <Txt v="label" style={{ flex: 1 }}>Chi thêm mỗi tháng</Txt>
+                              <Txt v="heading">{money((p.actual ?? 0) - sum.payment)}</Txt>
                             </Row>
                             <Txt v="small">
-                              Ngân hàng vẫn thu {money(sum.payment)}/tháng. Bảng thu chi tính {money(p.actual ?? 0)}/tháng; phần chuyển thêm trừ vào nợ gốc nên dư nợ giảm nhanh hơn.
+                              Bảng thu chi tính {money(p.actual ?? 0)}/tháng cho khoản vay này. Ngân hàng vẫn thu {money(sum.payment)}/tháng và dư nợ giảm theo đúng lịch của ngân hàng: phần chi thêm không trừ vào nợ gốc.
                             </Txt>
                           </>
                         ) : (
@@ -1502,12 +1497,6 @@ export function LoanSheet({
             <Txt v="small">Tổng lãi cả khoản vay</Txt>
             <Txt v="small">{money(loanTotalInterest(draft))}</Txt>
           </Row>
-          {interestSaved > 0 ? (
-            <Row>
-              <Txt v="small" color={c.positive}>Bớt lãi nhờ trả thêm</Txt>
-              <Txt v="small" color={c.positive}>{money(interestSaved)}</Txt>
-            </Row>
-          ) : null}
           {paid > 0 && paid < months ? (
             <Row>
               <Txt v="small">
