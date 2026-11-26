@@ -207,7 +207,7 @@ export default function Settings() {
           <Txt v="small" color={c.positive}>Đang nghe. Thử nói: “Finy ơi, ghi tiền mặt 30 nghìn ăn sáng”, hoặc gọi “Finy” rồi đợi Finy hỏi.</Txt>
         ) : null}
         <Txt v="small">
-          Nhận dạng giọng nói chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Khi Finy đang khoá, giọng nói chỉ ghi thêm được khoản tiền mặt hay giao dịch; Finy không đọc số liệu, không sửa hay xoá gì. Mở khoá Finy thì hỏi gì cũng được.
+          Nhận dạng giọng nói chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Vì bảo mật, qua giọng nói Finy chỉ nhận ghi chép (khoản tiền mặt, giao dịch), kể cả khi app đang mở: không trả lời câu hỏi về tiền bạc, không đọc số liệu, không sửa hay xoá gì. Muốn hỏi thì nhắn trong khung chat.
         </Txt>
         <Row style={{ gap: 10 }}>
           <Btn label="Nói với Finy" kind="ghost" icon="mic-outline" style={{ flex: 1 }} onPress={() => talk()} />

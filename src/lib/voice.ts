@@ -1,12 +1,13 @@
 // Talking to Finy. When "always listening" is on, Finy listens for its name -
 // also in the background, behind a foreground service with an ongoing
-// notification - asks what you need, does it, and answers out loud. The mic
-// button in the chat starts the same exchange without saying the name.
+// notification - asks what you need, takes the entry down, and confirms out
+// loud. The mic button in the chat starts the same exchange without the name.
 //
 // Privacy: recognition runs on the phone only (no audio leaves it); only the
-// words said after "Finy" are sent to Claude. While Finy is locked, a request
-// can only add a cash note or a transaction and is answered without any of
-// the user's data (see quickWrite in claude.ts).
+// words said after "Finy" are sent to Claude. By voice Finy only takes down
+// entries (a cash note or a transaction), locked or not, and never answers
+// questions about money: it gets none of the user's data to answer from (see
+// voiceEntry in claude.ts). Anything else is done in the app.
 //
 // Timing: React Native pauses JavaScript timers while the app is in the
 // background, so every wait here goes through FinyVoice.sleep (native).
@@ -15,7 +16,7 @@ import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import { create } from 'zustand';
 import FinyVoice from '../../modules/finy-voice';
-import { isBusy, quickWrite, sendToFiny } from './claude';
+import { voiceEntry } from './claude';
 import { uid } from './format';
 import { getVoicePref, hasPin, setVoicePref } from './security';
 import { useStore } from './store';
@@ -65,7 +66,7 @@ let wakeRest: string | null = null; // the name was heard in this sentence; what
 let exchange = 0; // bumped when an exchange is cancelled: its pending steps give up
 type Params = Anthropic.Beta.BetaMessageParam;
 // Finy asked something back: the next request continues the same exchange.
-let conversation: { mode: 'quick' | 'full'; messages: Params[]; turns: number } | null = null;
+let conversation: { messages: Params[]; turns: number } | null = null;
 let ready = false;
 
 /** Registers the event listeners, once. */
@@ -234,7 +235,9 @@ function say(text: string): Promise<void> {
         },
       );
     } else finish();
-    sleep(Math.min(40_000, 2500 + text.length * 110)).then(finish);
+    // Only if the voice engine never answers: it can take a few seconds to start, and
+    // listening again over the answer would cut it off.
+    sleep(Math.min(60_000, 8000 + text.length * 150)).then(finish);
   });
 }
 
@@ -297,35 +300,30 @@ async function handle(text: string) {
   }
 }
 
-/** Runs one request: everything when Finy is open and unlocked, only adding while it is locked. */
+/**
+ * Runs one spoken request. By voice Finy only takes entries down (a cash note
+ * or a transaction), whether it is locked or open, and never answers questions
+ * about money: whoever is near the phone hears the answer.
+ */
 async function act(text: string): Promise<string> {
-  const st = useStore.getState();
-  const locked = st.phase !== 'ready' || background();
-  if (locked) {
-    if (!(await hasPin())) return 'Bạn mở Finy và tạo mã PIN trước nhé.';
-    await st.ensureLoaded();
-    const prior = conversation?.mode === 'quick' ? conversation.messages : [];
-    const r = await quickWrite(text, prior);
-    log(`locked request: ${r.actions.length} added`);
-    conversation = { mode: 'quick', messages: r.messages, turns: (conversation?.turns ?? 0) + 1 };
-    // Shown in the chat afterwards, so what was done by voice can be checked.
-    const now = useStore.getState();
-    now.setChat(
-      [
-        ...now.chat,
-        { id: uid(), role: 'user', text: `🎙 ${text}` },
-        { id: uid(), role: 'assistant', text: r.reply, actions: r.actions.length ? r.actions : undefined },
-      ],
-      now.apiHistory,
-      now.apiHistoryKey ?? '',
-    );
-    return r.reply;
-  }
-  if (isBusy()) return 'Finy đang trả lời câu trước, bạn đợi chút nhé.';
-  await sendToFiny(`🎙 ${text}`);
-  conversation = { mode: 'full', messages: [], turns: (conversation?.turns ?? 0) + 1 };
-  const last = useStore.getState().chat.at(-1);
-  return last?.role === 'assistant' ? last.text : '';
+  if (!(await hasPin())) return 'Bạn mở Finy và tạo mã PIN trước nhé.';
+  // Loads the encrypted data if Finy has not been unlocked since it started; the lock screen stays.
+  await useStore.getState().ensureLoaded();
+  const r = await voiceEntry(text, conversation?.messages ?? []);
+  log(`request: ${r.actions.length} added`);
+  conversation = { messages: r.messages, turns: (conversation?.turns ?? 0) + 1 };
+  // Shown in the chat afterwards, so what was taken down by voice can be checked.
+  const now = useStore.getState();
+  now.setChat(
+    [
+      ...now.chat,
+      { id: uid(), role: 'user', text: `🎙 ${text}` },
+      { id: uid(), role: 'assistant', text: r.reply, actions: r.actions.length ? r.actions : undefined },
+    ],
+    now.apiHistory,
+    now.apiHistoryKey ?? '',
+  );
+  return r.reply;
 }
 
 /** After an exchange: back to listening for the name, or off. */
