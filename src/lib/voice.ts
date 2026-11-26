@@ -11,7 +11,6 @@
 // Timing: React Native pauses JavaScript timers while the app is in the
 // background, so every wait here goes through FinyVoice.sleep (native).
 import type Anthropic from '@anthropic-ai/sdk';
-import * as Speech from 'expo-speech';
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import { create } from 'zustand';
@@ -37,7 +36,12 @@ interface VoiceState {
 }
 
 export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null }));
-const setV = (p: Partial<VoiceState>) => useVoice.setState(p);
+const setV = (p: Partial<VoiceState>) => {
+  if (p.status && p.status !== useVoice.getState().status) log(`status ${p.status}`);
+  useVoice.setState(p);
+};
+/** Steps and error codes only, never what was said: enough to follow an exchange in logcat. */
+const log = (msg: string) => console.log(`[finy] voice ${msg}`);
 
 const LANG = 'vi-VN';
 /** Google's on-device recognizer (Android System Intelligence). */
@@ -57,6 +61,7 @@ let failures = 0; // recognitions in a row that ended without hearing anything
 let said = ''; // finished sentences of the request being said
 let saying = ''; // the sentence being said right now
 let tick = 0; // bumped by every result: a pending wait that sees a newer tick gives up
+let wakeRest: string | null = null; // the name was heard in this sentence; what followed it so far
 let exchange = 0; // bumped when an exchange is cancelled: its pending steps give up
 type Params = Anthropic.Beta.BetaMessageParam;
 // Finy asked something back: the next request continues the same exchange.
@@ -92,6 +97,8 @@ function begin() {
   running = true;
   said = '';
   saying = '';
+  wakeRest = null;
+  log(`listen ${kind}`);
   try {
     ExpoSpeechRecognitionModule.start({
       lang: LANG,
@@ -126,23 +133,37 @@ function retryWake() {
 }
 
 function onResult(text: string, final: boolean) {
-  if (!text) return;
-  failures = 0;
-  const t = ++tick;
   if (session === 'wake') {
-    const w = findWake(text);
-    if (!w) return;
-    if (final) {
-      if (isRequest(w.rest)) handle(w.rest);
+    if (text) failures = 0;
+    const w = text ? findWake(text) : null;
+    if (w) wakeRest = w.rest;
+    // The sentence ended. The recognizer often finishes a lone "Finy" with an empty
+    // result, so what the earlier partial results heard counts.
+    if (final && wakeRest !== null) {
+      const rest = wakeRest;
+      wakeRest = null;
+      ++tick;
+      log(`wake${isRequest(rest) ? ' with request' : ''}`);
+      if (isRequest(rest)) handle(rest);
       else ask();
       return;
     }
-    // The name was heard: if no request follows soon, ask for one.
-    setV({ heard: text });
+    if (!w) return;
+    // The name was heard: if the sentence never ends, ask anyway.
+    const t = ++tick;
     sleep(2500).then(() => {
-      if (t === tick && session === 'wake') ask();
+      if (t === tick && session === 'wake' && wakeRest !== null) {
+        wakeRest = null;
+        log('wake (no end of sentence)');
+        ask();
+      }
     });
-  } else if (session === 'command') {
+    return;
+  }
+  if (!text) return;
+  failures = 0;
+  const t = ++tick;
+  if (session === 'command') {
     if (final) {
       said = `${said} ${text}`.trim();
       saying = '';
@@ -158,6 +179,9 @@ function onResult(text: string, final: boolean) {
 }
 
 function onError(code: string) {
+  log(`error ${code}`);
+  // Stopped on purpose (a new recognition, or an exchange): not a failure.
+  if (code === 'aborted') return;
   if (code === 'not-allowed') turnOff('Finy chưa được phép dùng micro.').catch(() => undefined);
   else if (code === 'language-not-supported' || code === 'service-not-allowed') {
     turnOff('Máy chưa có gói nhận dạng tiếng Việt ngay trên máy. Bật lại để tải.').catch(() => undefined);
@@ -185,7 +209,11 @@ function onEnd() {
 
 // ---- the exchange ----
 
-/** Reads text aloud; resolves when done (or after a while if the voice engine does not answer). */
+/**
+ * Reads text aloud; resolves when done, or after a while if the voice engine
+ * does not answer. Speech goes through Finy's own module, which reconnects to
+ * the voice engine when Android stopped it in the background.
+ */
 function say(text: string): Promise<void> {
   return new Promise((resolve) => {
     let done = false;
@@ -194,7 +222,18 @@ function say(text: string): Promise<void> {
       done = true;
       resolve();
     };
-    Speech.speak(text, { language: LANG, onDone: finish, onStopped: finish, onError: finish });
+    if (FinyVoice) {
+      FinyVoice.speak(text, LANG).then(
+        (ok) => {
+          if (!ok) log('speak failed');
+          finish();
+        },
+        () => {
+          log('speak failed');
+          finish();
+        },
+      );
+    } else finish();
     sleep(Math.min(40_000, 2500 + text.length * 110)).then(finish);
   });
 }
@@ -216,7 +255,7 @@ function listenForRequest() {
   listen('command');
   // Nothing said at all: give up after a while.
   const t = ++tick;
-  sleep(9000).then(() => {
+  sleep(12_000).then(() => {
     if (t === tick && useVoice.getState().status === 'command') nothingHeard();
   });
 }
@@ -241,7 +280,8 @@ async function handle(text: string) {
   let reply: string;
   try {
     reply = await act(text);
-  } catch {
+  } catch (e) {
+    log(`request failed: ${e instanceof Error ? e.name : 'error'}`);
     reply = 'Finy gặp lỗi khi làm việc này. Bạn thử lại sau nhé.';
   }
   if (ex !== exchange) return;
@@ -266,6 +306,7 @@ async function act(text: string): Promise<string> {
     await st.ensureLoaded();
     const prior = conversation?.mode === 'quick' ? conversation.messages : [];
     const r = await quickWrite(text, prior);
+    log(`locked request: ${r.actions.length} added`);
     conversation = { mode: 'quick', messages: r.messages, turns: (conversation?.turns ?? 0) + 1 };
     // Shown in the chat afterwards, so what was done by voice can be checked.
     const now = useStore.getState();
@@ -326,11 +367,20 @@ function startAlways(): string | null {
   try {
     FinyVoice.startListening(LISTEN_TITLE, LISTEN_TEXT);
   } catch (e) {
+    // Usually: Finy was not on screen yet (e.g. the fingerprint prompt covered it). It is
+    // tried again each time Finy comes on screen.
+    log(`service not started: ${e instanceof Error ? e.name : 'error'}`);
     return `Android chưa cho Finy nghe khi chạy nền: ${e instanceof Error ? e.message : String(e)}`;
   }
-  failures = 0;
-  setV({ always: true, status: 'listening', error: null });
-  listen('wake');
+  // Already listening (the app came on screen twice in a row): keep the running recognition,
+  // but start one now if it is only waiting to retry.
+  const wasOn = useVoice.getState().always;
+  setV({ always: true, error: null });
+  if (!wasOn || (!running && useVoice.getState().status === 'listening')) {
+    failures = 0;
+    setV({ status: 'listening' });
+    listen('wake');
+  }
   return null;
 }
 
@@ -354,7 +404,7 @@ export async function turnOff(error: string | null = null): Promise<void> {
   ++tick;
   conversation = null;
   halt();
-  Speech.stop();
+  FinyVoice?.stopSpeaking();
   FinyVoice?.stopListening();
   setV({ always: false, status: 'off', error });
   await setVoicePref(false);
@@ -394,7 +444,7 @@ export function cancelTalk() {
   ++tick;
   conversation = null;
   halt();
-  Speech.stop();
+  FinyVoice?.stopSpeaking();
   FinyVoice?.hidePrompt();
   resume();
 }
