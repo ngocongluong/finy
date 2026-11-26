@@ -36,7 +36,7 @@ import {
   type VoiceStyle,
 } from './security';
 import { useStore } from './store';
-import { buildPrint, parsePrint, SHORT_MS, verify, type Strictness, type VoicePrint } from './voicePrint';
+import { adapt, buildPrint, parsePrint, PRINT_VERSION, SHORT_MS, verify, type Strictness, type VoicePrint } from './voicePrint';
 import { asksBack, findWake, isRequest, speakable } from './voiceText';
 
 export type VoiceStatus = 'off' | 'listening' | 'asking' | 'command' | 'working' | 'speaking' | 'enrolling';
@@ -53,9 +53,11 @@ interface VoiceState {
   error: string | null;
   /** The owner's voice is enrolled: only it gets an answer. */
   enrolled: boolean;
+  /** A voice was enrolled with an older way of comparing voices: it must be enrolled again. */
+  reenroll: boolean;
 }
 
-export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null, enrolled: false }));
+export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null, enrolled: false, reenroll: false }));
 let statusSince = Date.now(); // when the status last changed (the watchdog reads it)
 const setV = (p: Partial<VoiceState>) => {
   if (p.status && p.status !== useVoice.getState().status) {
@@ -187,21 +189,32 @@ function transcribe(path: string, speechMs: number): Promise<string> {
 // ---- the owner's voice ----
 
 async function loadPrint(): Promise<VoicePrint | null> {
-  if (print === undefined) print = parsePrint(await getVoicePrintRaw());
+  if (print === undefined) {
+    const stored = parsePrint(await getVoicePrintRaw());
+    // A print from an older way of comparing voices would not match: it must be enrolled again.
+    print = stored && stored.version === PRINT_VERSION ? stored : null;
+    setV({ reenroll: !!stored && !print });
+  }
   setV({ enrolled: !!print });
   return print;
 }
 
 /** Whether this voice may give Finy a request: anyone until a voice is enrolled, then only the owner. */
-async function ownerSpeaking(u: Utterance, what: string): Promise<boolean> {
+async function ownerSpeaking(u: Utterance, what: 'call' | 'request'): Promise<boolean> {
   const p = await loadPrint();
   if (!p) return true;
   if (!u.embedding) {
     log(`${what}: too short to check the voice`);
     return false;
   }
-  const r = verify(p, u.embedding, u.speechMs);
+  const r = verify(p, u.embedding, u.speechMs, what);
   log(`${what}: ${r.ok ? 'owner' : 'not the owner'} (${r.score} vs ${r.threshold}, ${u.speechMs} ms)`);
+  // Clearly the owner: the print follows how the owner really sounds when calling Finy.
+  const learned = r.ok ? adapt(p, u.embedding, u.speechMs, r.score, r.threshold) : null;
+  if (learned) {
+    print = learned;
+    setVoicePrintRaw(learned).catch(() => undefined);
+  }
   return r.ok;
 }
 
@@ -557,6 +570,7 @@ export const ENROLL_STEPS: { kind: 'wake' | 'sentence'; say: string }[] = [
   { kind: 'wake', say: 'Finy ơi' },
   { kind: 'wake', say: 'Finy ơi' },
   { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'wake', say: 'Finy ơi' },
   { kind: 'sentence', say: 'Finy ơi, ghi tiền mặt năm mươi nghìn ăn sáng' },
   { kind: 'sentence', say: 'Hôm nay tôi chi hai trăm nghìn tiền chợ' },
   { kind: 'sentence', say: 'Ghi giúp tôi một triệu tiền điện tháng này' },
@@ -591,7 +605,7 @@ export async function finishEnrollment(wake: number[][], sentences: number[][]):
     log(`voice enrolled (thresholds ${p.wakeT} / ${p.voiceT})`);
   }
   endEnrollment();
-  setV({ enrolled: !!print });
+  setV({ enrolled: !!print, reenroll: !print && useVoice.getState().reenroll });
   return !!p;
 }
 
@@ -606,7 +620,7 @@ export function endEnrollment() {
 export async function forgetVoice(): Promise<void> {
   await setVoicePrintRaw(null);
   print = null;
-  setV({ enrolled: false });
+  setV({ enrolled: false, reenroll: false });
 }
 
 export async function getVoiceCheck(): Promise<{ enrolled: boolean; strictness: Strictness; at: number }> {

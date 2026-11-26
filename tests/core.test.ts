@@ -826,7 +826,7 @@ test("Finy's name in what the recognizer heard, and the request after it", async
 });
 
 test("the owner's voice print: built from enrollment samples, accepts the owner, rejects others", async () => {
-  const { buildPrint, cosine, parsePrint, verify, SHORT_MS } = await import('../src/lib/voicePrint');
+  const { adapt, buildPrint, cosine, parsePrint, verify, CALL_LENIENCY, PRINT_VERSION, SHORT_MS } = await import('../src/lib/voicePrint');
   // Deterministic "voices": a direction in 192 dimensions, plus a little variation per sample.
   let seed = 7;
   const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31) * 2 - 1;
@@ -838,13 +838,25 @@ test("the owner's voice print: built from enrollment samples, accepts the owner,
   const sentences = Array.from({ length: 3 }, () => sample(owner, 0.5));
   assert.equal(buildPrint(wake.slice(0, 2), sentences), null);
   const print = buildPrint(wake, sentences, 'normal', 1)!;
-  assert.ok(print.wakeT >= 0.4 && print.wakeT <= 0.75 && print.voiceT >= 0.4 && print.voiceT <= 0.75, JSON.stringify([print.wakeT, print.voiceT]));
+  assert.equal(print.version, PRINT_VERSION);
+  assert.ok(print.wakeT >= 0.3 && print.wakeT <= 0.6 && print.voiceT >= 0.3 && print.voiceT <= 0.6, JSON.stringify([print.wakeT, print.voiceT]));
   assert.ok(Math.abs(cosine(print.wake, print.wake) - 1) < 1e-3);
   // A new call by the owner passes; another voice does not, short or long.
   assert.equal(verify(print, sample(owner, 0.5), 900).ok, true);
   assert.equal(verify(print, sample(owner, 0.5), SHORT_MS + 500).ok, true);
   assert.equal(verify(print, sample(other, 0.5), 900).ok, false);
   assert.equal(verify(print, sample(other, 0.5), SHORT_MS + 500).ok, false);
+  // The call gets a lower bar than the request.
+  const e = sample(owner, 0.5);
+  assert.ok(Math.abs(verify(print, e, 900, 'request').threshold - verify(print, e, 900, 'call').threshold - CALL_LENIENCY) < 1e-6);
+  // Learning: only from a clear pass, and only the matching half of the print moves.
+  const r = verify(print, e, 900);
+  assert.equal(adapt(print, e, 900, r.threshold + 0.01, r.threshold), null);
+  const learned = adapt(print, e, 900, r.threshold + 0.2, r.threshold)!;
+  assert.notDeepEqual(learned.wake, print.wake);
+  assert.deepEqual(learned.voice, print.voice);
+  assert.ok(cosine(learned.wake, e) > cosine(print.wake, e));
+  assert.deepEqual(adapt(print, e, SHORT_MS + 100, 1, 0.5)!.wake, print.wake);
   // Strictness moves the threshold.
   const strict = verify({ ...print, strictness: 'strict' }, sample(owner, 0.5), 900);
   const loose = verify({ ...print, strictness: 'loose' }, sample(owner, 0.5), 900);
@@ -852,5 +864,8 @@ test("the owner's voice print: built from enrollment samples, accepts the owner,
   // Stored and read back; junk is not a print.
   assert.deepEqual(parsePrint(JSON.parse(JSON.stringify(print))), print);
   assert.equal(parsePrint({ wake: [1, 2], voice: [1, 2] }), null);
+  // A print saved before versions existed reads as version 1 (to be enrolled again).
+  const { version: _, ...old } = print;
+  assert.equal(parsePrint(JSON.parse(JSON.stringify(old)))!.version, 1);
   assert.equal(parsePrint(null), null);
 });

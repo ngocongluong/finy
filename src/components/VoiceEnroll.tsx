@@ -11,6 +11,7 @@ import { Btn, Chip, Row, Sheet, Txt, useUi } from './ui';
 export function VoiceEnroll() {
   const { c } = useUi();
   const enrolled = useVoice((s) => s.enrolled);
+  const reenroll = useVoice((s) => s.reenroll);
   const [info, setInfo] = useState<{ strictness: Strictness; at: number }>({ strictness: 'normal', at: 0 });
   const [open, setOpen] = useState(false);
 
@@ -24,7 +25,9 @@ export function VoiceEnroll() {
       <Txt v="small" color={enrolled ? c.positive : c.warning}>
         {enrolled
           ? `Đã đăng ký giọng của bạn${info.at ? ` (${new Date(info.at).toLocaleDateString('vi-VN')})` : ''}. Giọng khác gọi Finy sẽ không được trả lời.`
-          : 'Chưa đăng ký giọng: ai gọi “Finy” cũng được trả lời.'}
+          : reenroll
+            ? 'Finy vừa đổi cách so giọng: bạn đăng ký lại giọng nhé. Trong lúc chờ, ai gọi “Finy” cũng được trả lời.'
+            : 'Chưa đăng ký giọng: ai gọi “Finy” cũng được trả lời.'}
       </Txt>
       {enrolled ? (
         <>
@@ -120,7 +123,7 @@ function EnrollSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
   return (
     <Sheet visible={visible} onClose={onClose} title="Đăng ký giọng của bạn" footer={done ? <Btn label="Xong" icon="checkmark" onPress={onClose} /> : undefined}>
       <Txt v="small">
-        Ở chỗ yên tĩnh, cầm máy như khi gọi Finy và nói tự nhiên. Finy chỉ giữ lại các con số mô tả giọng bạn, không lưu bản ghi âm nào.
+        Để máy ở chỗ và khoảng cách bạn hay gọi Finy (ví dụ đặt trên bàn), rồi nói tự nhiên như khi gọi thật. Finy chỉ giữ lại các con số mô tả giọng bạn, không lưu bản ghi âm nào; về sau Finy tự học thêm mỗi lần nhận ra bạn.
       </Txt>
       {!done ? (
         <View style={{ gap: 14, alignItems: 'center', paddingVertical: 8 }}>

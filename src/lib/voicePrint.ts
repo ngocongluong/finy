@@ -5,7 +5,14 @@
 
 export type Strictness = 'loose' | 'normal' | 'strict';
 
+/**
+ * Bumped when the embeddings change meaning (2: computed on speech alone, the
+ * VAD dropping silence and noise). A print of another version is enrolled again.
+ */
+export const PRINT_VERSION = 2;
+
 export interface VoicePrint {
+  version: number;
   /** Average of the "Finy ơi" samples: compared with a short call. */
   wake: number[];
   /** Average of every sample: compared with longer speech. */
@@ -20,10 +27,17 @@ export interface VoicePrint {
 
 /** Added to the measured thresholds. */
 export const STRICTNESS: Record<Strictness, { label: string; offset: number }> = {
-  loose: { label: 'Dễ', offset: -0.07 },
+  loose: { label: 'Dễ', offset: -0.08 },
   normal: { label: 'Vừa', offset: 0 },
-  strict: { label: 'Khắt khe', offset: 0.05 },
+  strict: { label: 'Khắt khe', offset: 0.06 },
 };
+
+/**
+ * The call itself ("Finy ơi") is short and often said from further away, so it
+ * gets a lower bar; the request, longer and more telling, gets the full one
+ * before anything is written down.
+ */
+export const CALL_LENIENCY = 0.08;
 
 /** Speech shorter than this is taken as just the name ("Finy ơi"). */
 export const SHORT_MS = 1300;
@@ -66,26 +80,48 @@ function selfSimilarity(samples: number[][]): number {
 /**
  * The print from enrollment samples (at least 3 calls and 2 sentences); null
  * when there are too few. Thresholds sit a little below the owner's own
- * lowest likeness, within 0.40–0.75.
+ * lowest likeness, within 0.30–0.60 (other people's voices score about
+ * 0–0.35 with this model).
  */
 export function buildPrint(wake: number[][], sentences: number[][], strictness: Strictness = 'normal', at = Date.now()): VoicePrint | null {
   if (wake.length < 3 || sentences.length < 2) return null;
   const all = [...wake, ...sentences];
   return {
+    version: PRINT_VERSION,
     wake: round(normalize(mean(wake))),
     voice: round(normalize(mean(all))),
-    wakeT: Math.round(clamp(selfSimilarity(wake) - 0.1, 0.4, 0.75) * 1000) / 1000,
-    voiceT: Math.round(clamp(selfSimilarity(all) - 0.1, 0.4, 0.75) * 1000) / 1000,
+    wakeT: Math.round(clamp(selfSimilarity(wake) - 0.12, 0.3, 0.6) * 1000) / 1000,
+    voiceT: Math.round(clamp(selfSimilarity(all) - 0.12, 0.3, 0.6) * 1000) / 1000,
     strictness,
     at,
   };
 }
 
-/** Whether a voice is the owner's: the best likeness to the print against the threshold for its length. */
-export function verify(print: VoicePrint, embedding: number[], speechMs: number): { ok: boolean; score: number; threshold: number } {
+/**
+ * Whether a voice is the owner's: the best likeness to the print against the
+ * threshold for its length, lower for the call than for the request.
+ */
+export function verify(
+  print: VoicePrint,
+  embedding: number[],
+  speechMs: number,
+  what: 'call' | 'request' = 'request',
+): { ok: boolean; score: number; threshold: number } {
   const score = Math.max(cosine(embedding, print.wake), cosine(embedding, print.voice));
-  const threshold = (speechMs < SHORT_MS ? print.wakeT : print.voiceT) + STRICTNESS[print.strictness].offset;
+  const threshold = (speechMs < SHORT_MS ? print.wakeT : print.voiceT) + STRICTNESS[print.strictness].offset - (what === 'call' ? CALL_LENIENCY : 0);
   return { ok: score >= threshold, score: Math.round(score * 1000) / 1000, threshold: Math.round(threshold * 1000) / 1000 };
+}
+
+/**
+ * Learns from a voice that clearly passed (by a margin): the print moves a
+ * little towards it, so it follows how the owner really calls Finy (distance,
+ * room, screen off). Short speech adjusts the call print, longer the voice print.
+ */
+export function adapt(print: VoicePrint, embedding: number[], speechMs: number, score: number, threshold: number): VoicePrint | null {
+  if (score < threshold + 0.05) return null;
+  const e = normalize(embedding);
+  const blend = (p: number[]) => round(normalize(p.map((x, i) => 0.85 * x + 0.15 * e[i])));
+  return speechMs < SHORT_MS ? { ...print, wake: blend(print.wake) } : { ...print, voice: blend(print.voice) };
 }
 
 /** A stored print, checked: null when it is not one. */
@@ -95,5 +131,5 @@ export function parsePrint(raw: unknown): VoicePrint | null {
   if (!p || !vec(p.wake) || !vec(p.voice) || p.wake!.length !== p.voice!.length) return null;
   const t = (x: unknown) => (typeof x === 'number' && x > 0 && x < 1 ? x : 0.6);
   const strictness: Strictness = p.strictness === 'loose' || p.strictness === 'strict' ? p.strictness : 'normal';
-  return { wake: p.wake!, voice: p.voice!, wakeT: t(p.wakeT), voiceT: t(p.voiceT), strictness, at: typeof p.at === 'number' ? p.at : 0 };
+  return { version: typeof p.version === 'number' ? p.version : 1, wake: p.wake!, voice: p.voice!, wakeT: t(p.wakeT), voiceT: t(p.voiceT), strictness, at: typeof p.at === 'number' ? p.at : 0 };
 }

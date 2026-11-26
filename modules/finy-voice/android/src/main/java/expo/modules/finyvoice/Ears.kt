@@ -11,8 +11,11 @@ import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -26,9 +29,10 @@ import kotlin.math.sqrt
 /**
  * Finy's ears. One thread reads the microphone (16 kHz mono) and keeps the
  * last seconds in a ring; a keyword spotter listens for "Finy"; on request an
- * utterance is recorded until the speaker stops, written to the cache for the
- * speech recognizer (the app deletes it right after) and given a speaker
- * embedding, so the app can tell the owner's voice from others.
+ * utterance is recorded until the speaker stops (Silero VAD tells speech from
+ * silence and noise), written to the cache for the speech recognizer (the app
+ * deletes it right after) and given a speaker embedding computed on the
+ * speech alone, so the app can tell the owner's voice from others.
  * Everything runs on the phone (sherpa-onnx).
  */
 internal class Ears(
@@ -60,6 +64,8 @@ internal class Ears(
   private var spotter: KeywordSpotter? = null
   private var spotterTuning = Pair(0f, 0f)
   private var speaker: SpeakerEmbeddingExtractor? = null
+  // null if it could not be loaded: loudness is used instead.
+  private var vad: Vad? = null
 
   // The last RING_MS of audio: the start of an utterance that began before it was asked for.
   private val ring = ShortArray(RATE / 1000 * RING_MS)
@@ -123,6 +129,18 @@ internal class Ears(
     }
     if (speaker == null) {
       speaker = SpeakerEmbeddingExtractor(context.assets, SpeakerEmbeddingExtractorConfig(model = "$DIR/speaker.onnx", numThreads = 1))
+    }
+    if (vad == null) {
+      vad = runCatching {
+        Vad(
+          context.assets,
+          VadModelConfig(
+            sileroVadModelConfig = SileroVadModelConfig(model = "$DIR/silero_vad.onnx", threshold = 0.5f, minSilenceDuration = 0.25f, minSpeechDuration = 0.1f, windowSize = WIN),
+            sampleRate = RATE,
+            numThreads = 1,
+          ),
+        )
+      }.onFailure { Log.w(TAG, "No VAD, using loudness: ${it.message}") }.getOrNull()
     }
   }
 
@@ -241,9 +259,33 @@ internal class Ears(
 
   // ---- recording one utterance ----
 
-  private inner class Capture(val req: Request, recent: ShortArray, private val thresholdDb: Float) {
+  /** Speech or not, one window of WIN samples at a time (Silero VAD, or loudness without it). */
+  private inner class SpeechGate(private val thresholdDb: Float) {
+    private var inSpeech = false
+    private val floats = FloatArray(WIN)
+
+    init {
+      vad?.reset()
+    }
+
+    fun voiced(buf: ShortArray, offset: Int): Boolean {
+      val v = vad ?: return frameDb(buf, offset, WIN) > thresholdDb
+      for (i in 0 until WIN) floats[i] = buf[offset + i] / 32768f
+      val p = runCatching { v.compute(floats) }.getOrDefault(0f)
+      // Enters speech at 0.5, leaves it below 0.35: no flicker inside a word.
+      inSpeech = if (inSpeech) p >= 0.35f else p >= 0.5f
+      return inSpeech
+    }
+  }
+
+  private inner class Capture(val req: Request, recent: ShortArray, thresholdDb: Float) {
+    private val gate = SpeechGate(thresholdDb)
     private var audio = ShortArray(RATE * 4)
     private var length = 0
+    // One flag per window: what the speaker embedding is computed on.
+    private var voicedWindows = BooleanArray(256)
+    private var windows = 0
+    private var pending = ShortArray(0) // samples not yet making a whole window
     private var started = false
     private var firstVoiced = -1
     private var lastVoicedEnd = 0
@@ -253,53 +295,69 @@ internal class Ears(
     private var voicedDbSum = 0.0
 
     init {
-      feed(recent, recent.size, countTime = false)
+      // Whole windows only, the most recent ones.
+      val usable = recent.size - recent.size % WIN
+      feed(recent, recent.size - usable, usable, countTime = false)
       // What came before the request counts as speech only if it was still going on.
       if (started && silentMs >= req.endSilenceMs) {
         started = false
         firstVoiced = -1
         speechMs = 0
         voicedDbSum = 0.0
+        voicedWindows.fill(false)
       }
     }
 
     /** Adds audio; true when the utterance is over. */
     fun add(chunk: ShortArray, n: Int): Boolean {
-      feed(chunk, n, countTime = true)
+      val joined = if (pending.isEmpty()) chunk.copyOf(n) else pending + chunk.copyOf(n)
+      val usable = joined.size - joined.size % WIN
+      feed(joined, 0, usable, countTime = true)
+      pending = joined.copyOfRange(usable, joined.size)
       return (started && silentMs >= req.endSilenceMs) || (!started && elapsedMs >= req.startTimeoutMs) || elapsedMs >= req.maxMs
     }
 
-    private fun feed(src: ShortArray, n: Int, countTime: Boolean) {
+    private fun feed(src: ShortArray, from: Int, n: Int, countTime: Boolean) {
       if (length + n > audio.size) audio = audio.copyOf(max(audio.size * 2, length + n))
-      System.arraycopy(src, 0, audio, length, n)
+      System.arraycopy(src, from, audio, length, n)
       var i = 0
-      while (i + FRAME <= n) {
-        val db = frameDb(src, i, FRAME)
-        if (db > thresholdDb) {
+      while (i + WIN <= n) {
+        if (windows >= voicedWindows.size) voicedWindows = voicedWindows.copyOf(voicedWindows.size * 2)
+        val voiced = gate.voiced(src, from + i)
+        voicedWindows[windows++] = voiced
+        if (voiced) {
           if (firstVoiced < 0) firstVoiced = length + i
           started = true
           silentMs = 0
-          speechMs += FRAME_MS
-          voicedDbSum += db
-          lastVoicedEnd = length + i + FRAME
+          speechMs += WIN_MS
+          voicedDbSum += frameDb(src, from + i, WIN)
+          lastVoicedEnd = length + i + WIN
         } else if (started) {
-          silentMs += FRAME_MS
+          silentMs += WIN_MS
         }
-        if (countTime) elapsedMs += FRAME_MS
-        i += FRAME
+        if (countTime) elapsedMs += WIN_MS
+        i += WIN
       }
       length += n
     }
 
     fun finish(): Utterance {
-      val level = if (speechMs > 0) (voicedDbSum / (speechMs / FRAME_MS)).toFloat() else -100f
+      val level = if (speechMs > 0) (voicedDbSum / (speechMs / WIN_MS)).toFloat() else -100f
       if (!started || speechMs < 200) return Utterance(null, speechMs, null, level)
-      // The speech with a little room around it.
+      // For the recognizer: the speech with a little room around it.
       val from = max(0, firstVoiced - RATE / 4)
       val to = min(length, lastVoicedEnd + RATE * 3 / 10)
-      val pcm = audio.copyOfRange(from, to)
-      val path = writeWav(pcm)
-      val embedding = if (speechMs >= 300) embed(pcm) else null
+      val path = writeWav(audio.copyOfRange(from, to))
+      // For the voice check: the speech alone (each run with one window of margin), no silence or noise.
+      val keep = BooleanArray(windows) { w -> voicedWindows[w] || (w > 0 && voicedWindows[w - 1]) || (w + 1 < windows && voicedWindows[w + 1]) }
+      val speech = ShortArray(keep.count { it } * WIN)
+      var o = 0
+      for (w in 0 until windows) {
+        if (!keep[w]) continue
+        System.arraycopy(audio, w * WIN, speech, o, WIN)
+        o += WIN
+      }
+      val embedding = if (speechMs >= 300) embed(speech) else null
       return Utterance(path, speechMs, embedding, level)
     }
   }
@@ -341,9 +399,10 @@ internal class Ears(
     private const val TAG = "FinyEars"
     private const val DIR = "finy-ears"
     const val RATE = 16000
-    private const val CHUNK = 1600 // 100 ms
-    private const val FRAME = 320 // 20 ms
-    private const val FRAME_MS = 20
+    private const val WIN = 512 // 32 ms: the VAD's window
+    private const val WIN_MS = 32
+    private const val CHUNK = WIN * 3 // 96 ms read at a time
+    private const val FRAME = 320 // 20 ms, for following the room's loudness
     private const val RING_MS = 4000
 
     private fun frameDb(buf: ShortArray, offset: Int, n: Int): Float {
