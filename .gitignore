@@ -17,8 +17,8 @@ npm-debug.log*
 yarn-error.log*
 
 # Android / iOS build output
-android/
-ios/
+/android/
+/ios/
 *.apk
 *.aab
 .gradle/
@@ -36,3 +36,10 @@ google-services*.json
 
 # Bank statements (personal data)
 *.pdf
+
+# Finy's ears: downloaded by scripts/fetch-ears.sh (sherpa-onnx and its models, ~60 MB)
+modules/finy-voice/android/libs/
+modules/finy-voice/android/src/main/jniLibs/
+modules/finy-voice/android/src/main/assets/finy-ears/*.onnx
+modules/finy-voice/android/src/main/assets/finy-ears/kws/*.onnx
+modules/finy-voice/android/src/main/assets/finy-ears/kws/tokens.txt

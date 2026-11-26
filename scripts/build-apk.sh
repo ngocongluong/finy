@@ -20,6 +20,9 @@ if [ ! -s .credentials ]; then
   echo "Warning: .credentials is empty - the Claude features will ask for a key in Settings." >&2
 fi
 
+# sherpa-onnx and the voice models (not in git): downloaded once, checked against their SHA-256.
+bash scripts/fetch-ears.sh
+
 npx expo prebuild --platform android --no-install
 # The Galaxy S23 (and every recent phone) is arm64. Building one ABI keeps the
 # build small and fast; set FINY_ARCHS to build more (comma separated).

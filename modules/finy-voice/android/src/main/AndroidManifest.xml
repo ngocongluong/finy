@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Listening for "Finy" in the background: a foreground service of type microphone. -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Keeps the CPU awake while Finy listens with the screen off (between recognitions too). -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- Asks once to be left out of battery optimization, so Android does not put Finy to sleep. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <application>
+    <service
+      android:name="expo.modules.finyvoice.FinyListenService"
+      android:exported="false"
+      android:foregroundServiceType="microphone" />
+  </application>
+</manifest>
