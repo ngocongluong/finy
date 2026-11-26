@@ -10,6 +10,7 @@ const K_DBKEY = 'finy_db_key';
 const K_FAILS = 'finy_pin_fails';
 const K_BIO = 'finy_biometric';
 const K_VOICE = 'finy_voice_always';
+const K_VOICE_STYLE = 'finy_voice_style';
 
 export const PIN_LENGTH = 6;
 const HASH_ROUNDS = 400;
@@ -109,6 +110,30 @@ export async function getVoicePref(): Promise<boolean> {
 
 export async function setVoicePref(on: boolean): Promise<void> {
   await SecureStore.setItemAsync(K_VOICE, on ? '1' : '0');
+}
+
+/** How Finy sounds: a voice of the phone's voice engine (null = its default), pitch and rate (1 = normal). */
+export interface VoiceStyle {
+  voice: string | null;
+  pitch: number;
+  rate: number;
+}
+
+export const DEFAULT_VOICE_STYLE: VoiceStyle = { voice: null, pitch: 1, rate: 1 };
+
+/** Kept with the other voice setting: Finy speaks before the app is unlocked too. */
+export async function getVoiceStyle(): Promise<VoiceStyle> {
+  try {
+    const raw = JSON.parse((await SecureStore.getItemAsync(K_VOICE_STYLE)) ?? 'null') as Partial<VoiceStyle> | null;
+    const num = (n: unknown, d: number) => (typeof n === 'number' && n >= 0.5 && n <= 2 ? n : d);
+    return { voice: typeof raw?.voice === 'string' ? raw.voice : null, pitch: num(raw?.pitch, 1), rate: num(raw?.rate, 1) };
+  } catch {
+    return DEFAULT_VOICE_STYLE;
+  }
+}
+
+export async function setVoiceStyle(style: VoiceStyle): Promise<void> {
+  await SecureStore.setItemAsync(K_VOICE_STYLE, JSON.stringify(style));
 }
 
 // The fingerprint request waiting for an answer, if any. Android drops a request made while

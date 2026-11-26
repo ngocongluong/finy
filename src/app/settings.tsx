@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, TextInput, View } from 'react-native';
 import { NumberSheet, Toggle } from '../components/sheets';
+import { VoicePicker } from '../components/VoicePicker';
 import { Btn, Card, Chip, Field, IconBtn, Row, Screen, Segmented, Sheet, Txt, useUi } from '../components/ui';
 import { apiKey, testKey } from '../lib/claude';
 import { fmtVND } from '../lib/format';
@@ -214,6 +215,8 @@ export default function Settings() {
           <Btn label="Cài đặt pin" kind="ghost" icon="battery-half-outline" style={{ flex: 1 }} onPress={() => Linking.openSettings()} />
         </Row>
         <Txt v="small">Để Android không tắt Finy khi chạy nền: Cài đặt pin → Pin → Không hạn chế.</Txt>
+        <View style={{ height: 1, backgroundColor: c.border }} />
+        <VoicePicker />
       </Card>
 
       <Card style={{ gap: 12 }}>

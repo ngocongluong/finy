@@ -18,7 +18,7 @@ import { create } from 'zustand';
 import FinyVoice from '../../modules/finy-voice';
 import { voiceEntry } from './claude';
 import { uid } from './format';
-import { getVoicePref, hasPin, setVoicePref } from './security';
+import { DEFAULT_VOICE_STYLE, getVoicePref, getVoiceStyle, hasPin, setVoicePref, setVoiceStyle, type VoiceStyle } from './security';
 import { useStore } from './store';
 import { asksBack, findWake, isRequest, speakable } from './voiceText';
 
@@ -72,6 +72,9 @@ type Params = Anthropic.Beta.BetaMessageParam;
 // Finy asked something back: the next request continues the same exchange.
 let conversation: { messages: Params[]; turns: number } | null = null;
 let ready = false;
+// How Finy sounds (Settings); read once, then kept here.
+let style: VoiceStyle | null = null;
+const currentStyle = async (): Promise<VoiceStyle> => (style ??= await getVoiceStyle().catch(() => DEFAULT_VOICE_STYLE));
 
 /** Registers the event listeners, once. */
 function init() {
@@ -221,7 +224,7 @@ function onEnd() {
  * does not answer. Speech goes through Finy's own module, which reconnects to
  * the voice engine when Android stopped it in the background.
  */
-function say(text: string): Promise<void> {
+function say(text: string, styleOverride?: VoiceStyle): Promise<void> {
   return new Promise((resolve) => {
     let done = false;
     const finish = () => {
@@ -230,16 +233,19 @@ function say(text: string): Promise<void> {
       resolve();
     };
     if (FinyVoice) {
-      FinyVoice.speak(text, LANG).then(
-        (ok) => {
-          if (!ok) log('speak failed');
-          finish();
-        },
-        () => {
-          log('speak failed');
-          finish();
-        },
-      );
+      const engine = FinyVoice;
+      (styleOverride ? Promise.resolve(styleOverride) : currentStyle())
+        .then((s) => engine.speak(text, LANG, s.voice, s.pitch, s.rate))
+        .then(
+          (ok) => {
+            if (!ok) log('speak failed');
+            finish();
+          },
+          () => {
+            log('speak failed');
+            finish();
+          },
+        );
     } else finish();
     // Only if the voice engine never answers: it can take a few seconds to start, and
     // listening again over the answer would cut it off.
@@ -451,4 +457,43 @@ export function cancelTalk() {
   FinyVoice?.stopSpeaking();
   FinyVoice?.hidePrompt();
   resume();
+}
+
+// ---- Finy's voice (Settings) ----
+
+/** A Vietnamese voice of the phone's voice engine that works offline. */
+export interface FinyVoiceOption {
+  name: string;
+  /** Higher sounds better (Android's 100-500 scale). */
+  quality: number;
+  /** Its voice data is not downloaded yet (Google speech settings). */
+  missing: boolean;
+}
+
+/**
+ * The Vietnamese voices Finy can speak with. Voices that need the network are
+ * left out: they would send what Finy says to Google.
+ */
+export async function listVoices(): Promise<FinyVoiceOption[]> {
+  if (!FinyVoice) return [];
+  const all = await FinyVoice.voices(LANG).catch(() => []);
+  log(`voices: ${all.map((v) => `${v.name}${v.network ? ' (network)' : ''}${v.installed ? '' : ' (not installed)'}`).join(', ')}`);
+  return all.filter((v) => !v.network).map((v) => ({ name: v.name, quality: v.quality, missing: !v.installed }));
+}
+
+export const PREVIEW = 'Dạ, Finy nghe. Bạn cần ghi gì?';
+
+/** Plays a sample in a voice style without saving it. */
+export async function previewVoice(s: VoiceStyle): Promise<void> {
+  FinyVoice?.stopSpeaking();
+  await say(PREVIEW, s);
+}
+
+export async function getFinyVoiceStyle(): Promise<VoiceStyle> {
+  return currentStyle();
+}
+
+export async function saveFinyVoiceStyle(s: VoiceStyle): Promise<void> {
+  style = s;
+  await setVoiceStyle(s);
 }

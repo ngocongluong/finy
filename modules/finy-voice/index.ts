@@ -18,8 +18,13 @@ declare class FinyVoiceModule extends NativeModule<Events> {
   hidePrompt(): void;
   /** Resolves after `ms`, also while the app is in the background (JS timers are paused then). */
   sleep(ms: number): Promise<void>;
-  /** Reads text aloud (reconnecting to the voice engine if Android stopped it); true when spoken to the end. */
-  speak(text: string, lang: string): Promise<boolean>;
+  /**
+   * Reads text aloud (reconnecting to the voice engine if Android stopped it); true when
+   * spoken to the end. voice: a name from voices(), null for the default; pitch and rate: 1 = normal.
+   */
+  speak(text: string, lang: string, voice: string | null, pitch: number, rate: number): Promise<boolean>;
+  /** The voice engine's voices for a language. */
+  voices(lang: string): Promise<{ name: string; quality: number; network: boolean; installed: boolean }[]>;
   stopSpeaking(): void;
 }
 
