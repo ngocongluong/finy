@@ -71,6 +71,11 @@ interface State {
   pendingPrompt: string | null;
 
   boot: () => Promise<void>;
+  /**
+   * Opens the encrypted database and loads everything, without unlocking the
+   * app (the lock screen stays). Used by voice notes taken while Finy is locked.
+   */
+  ensureLoaded: () => Promise<void>;
   unlock: () => Promise<void>;
   lock: () => void;
   toggleReveal: (section: string) => void;
@@ -131,6 +136,9 @@ function sortCashNotes(list: CashNote[]): CashNote[] {
   return [...list].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
 }
 
+/** The load in progress, if any (see ensureLoaded). */
+let loading: Promise<void> | null = null;
+
 function persist(key: string, value: unknown) {
   db.kvSet(key, value).catch((e) => console.warn(`Failed to save ${key}`, e));
 }
@@ -182,8 +190,10 @@ export const useStore = create<State>((set, get) => ({
     set({ phase: (await hasPin()) ? 'locked' : 'setup' });
   },
 
-  unlock: async () => {
-    if (!get().loaded) {
+  ensureLoaded: async () => {
+    if (get().loaded) return;
+    // One load at a time: a voice note and an unlock can ask together.
+    loading ??= (async () => {
       await db.openDb(await getDbKey());
       // Once, when foreign-currency card alerts started being imported: import all card mail
       // again from scratch, so every alert has the balance of the one before it to price from.
@@ -264,6 +274,15 @@ export const useStore = create<State>((set, get) => ({
 
       if (oneOffs === null) persist('oneOffs', get().oneOffs);
       if (seeded) persist('accounts', seeded.accounts);
+    })().finally(() => {
+      loading = null;
+    });
+    await loading;
+  },
+
+  unlock: async () => {
+    if (!get().loaded) {
+      await get().ensureLoaded();
     } else {
       set({ revealed: [] });
     }

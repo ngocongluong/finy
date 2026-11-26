@@ -9,6 +9,7 @@ const K_HASH = 'finy_pin_hash';
 const K_DBKEY = 'finy_db_key';
 const K_FAILS = 'finy_pin_fails';
 const K_BIO = 'finy_biometric';
+const K_VOICE = 'finy_voice_always';
 
 export const PIN_LENGTH = 6;
 const HASH_ROUNDS = 400;
@@ -95,6 +96,19 @@ export async function getBiometricPref(): Promise<boolean> {
 
 export async function setBiometricPref(on: boolean): Promise<void> {
   await SecureStore.setItemAsync(K_BIO, on ? '1' : '0');
+}
+
+/**
+ * Whether Finy listens for its name all the time. Kept outside the encrypted
+ * database, like the fingerprint setting, because listening starts before the
+ * app is unlocked. Off unless turned on.
+ */
+export async function getVoicePref(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(K_VOICE)) === '1';
+}
+
+export async function setVoicePref(on: boolean): Promise<void> {
+  await SecureStore.setItemAsync(K_VOICE, on ? '1' : '0');
 }
 
 // The fingerprint request waiting for an answer, if any. Android drops a request made while

@@ -802,3 +802,23 @@ test('cash notes: a month day by day with totals, and the notes used most often'
   assert.deepEqual(frequentNotes(notes), ['ăn sáng', 'Gửi xe', 'Chợ']);
   assert.deepEqual(frequentNotes(notes, 1), ['ăn sáng']);
 });
+
+test("Finy's name in what the recognizer heard, and the request after it", async () => {
+  const { asksBack, findWake, isRequest, plain, speakable } = await import('../src/lib/voiceText');
+  assert.equal(plain('Phải Nì! Đã'), 'phai ni da');
+  // One word or two syllables, any accents, "ơi" after the name dropped.
+  assert.deepEqual(findWake('Finy ơi ghi tiền mặt 300 nghìn ăn sáng'), { rest: 'ghi tiền mặt 300 nghìn ăn sáng' });
+  assert.deepEqual(findWake('Phi ni, nhập 300.000 tiền mặt'), { rest: 'nhập 300.000 tiền mặt' });
+  assert.deepEqual(findWake('à phai ni'), { rest: '' });
+  assert.deepEqual(findWake('FINI à'), { rest: '' });
+  assert.deepEqual(findWake('ừ thì finy ghi giúp 50k gửi xe'), { rest: 'ghi giúp 50k gửi xe' });
+  // Everyday words are not the name.
+  for (const s of ['hôm nay trời đẹp', 'phải nói là', 'phí ngân hàng', 'phim hay', 'fine thank you']) assert.equal(findWake(s), null, s);
+  assert.deepEqual([isRequest(''), isRequest('ừ'), isRequest('ghi 300 nghìn')], [false, false, true]);
+  // Read aloud: no markdown, "đ" as "đồng", a long answer cut at a sentence.
+  assert.equal(speakable('**Đã ghi** 300.000 đ tiền mặt.\n- Ăn sáng'), 'Đã ghi 300.000 đồng tiền mặt. Ăn sáng');
+  const long = `${'Câu thứ nhất khá dài để thử. '.repeat(8)}Câu cuối.`;
+  const spoken = speakable(long, 120);
+  assert.ok(spoken.length < 180 && spoken.endsWith('Phần còn lại có trong khung chat.'), spoken);
+  assert.deepEqual([asksBack('Bạn chi bao nhiêu?'), asksBack('Đã ghi.')], [true, false]);
+});

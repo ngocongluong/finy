@@ -7,6 +7,7 @@ import { IconBtn, RichText, Screen, Txt, useKeyboardSpace, useUi } from '../../c
 import { apiKey, sendToFiny } from '../../lib/claude';
 import { useStore } from '../../lib/store';
 import { maskMoney } from '../../lib/format';
+import { talk } from '../../lib/voice';
 import { alpha } from '../../lib/theme';
 
 const SUGGESTIONS = [
@@ -139,13 +140,14 @@ export default function Chat() {
             onFocus={() => setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 300)}
             style={{ flex: 1, backgroundColor: c.card, color: c.text, borderRadius: Math.min(r, 22), paddingHorizontal: 16, paddingVertical: 12, fontSize: fs(16), maxHeight: 130, minHeight: 48, borderWidth: 1, borderColor: c.border }}
           />
+          {/* Nothing typed: the button talks to Finy instead (it asks what you need and listens). */}
           <Pressable
-            onPress={() => send(text)}
-            disabled={busy || !text.trim()}
+            onPress={() => (text.trim() ? send(text) : talk())}
+            disabled={busy}
             accessibilityRole="button"
-            accessibilityLabel="Gửi"
-            style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: busy || !text.trim() ? 0.4 : 1 }}>
-            <Ionicons name="arrow-up" size={22} color={c.onAccent} />
+            accessibilityLabel={text.trim() ? 'Gửi' : 'Nói với Finy'}
+            style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}>
+            <Ionicons name={text.trim() ? 'arrow-up' : 'mic'} size={22} color={c.onAccent} />
           </Pressable>
         </View>
       </Animated.View>

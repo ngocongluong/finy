@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, TextInput, View } from 'react-native';
 import { NumberSheet, Toggle } from '../components/sheets';
 import { Btn, Card, Chip, Field, IconBtn, Row, Screen, Segmented, Sheet, Txt, useUi } from '../components/ui';
 import { apiKey, testKey } from '../lib/claude';
@@ -11,6 +11,7 @@ import { withoutAutoLock } from '../lib/lockGuard';
 import { biometricAvailable, getBiometricPref, PIN_LENGTH, setBiometricPref, setPin, verifyPin } from '../lib/security';
 import { useStore } from '../lib/store';
 import { alpha } from '../lib/theme';
+import { talk, turnOff, turnOn, useVoice } from '../lib/voice';
 
 const LOCK_OPTIONS = [
   { value: 0, label: 'Ngay lập tức' },
@@ -60,6 +61,7 @@ export default function Settings() {
   const [testing, setTesting] = useState(false);
 
   const [bioOn, setBioOn] = useState(true);
+  const [voiceBusy, setVoiceBusy] = useState(false);
 
   useEffect(() => {
     biometricAvailable().then(setBioAvail);
@@ -146,6 +148,8 @@ export default function Settings() {
   };
 
   const embedded = !settings.apiKeyOverride && !!apiKey();
+  const voiceOn = useVoice((s) => s.always);
+  const voiceError = useVoice((s) => s.error);
 
   return (
     <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
@@ -175,6 +179,41 @@ export default function Settings() {
           <Btn label="Khoá ngay" kind="ghost" icon="lock-closed-outline" style={{ flex: 1 }} onPress={() => useStore.getState().lock()} />
         </Row>
         <Txt v="small">Dữ liệu được mã hoá trên máy (SQLCipher, khoá nằm trong Android Keystore). App chặn chụp màn hình và ẩn nội dung ở màn hình đa nhiệm.</Txt>
+      </Card>
+
+      <Card style={{ gap: 12 }}>
+        <Row>
+          <Txt v="heading">Gọi Finy bằng giọng nói</Txt>
+          {voiceBusy ? <ActivityIndicator color={c.accent} /> : null}
+        </Row>
+        <Toggle
+          label="Luôn nghe “Finy”"
+          hint="Kể cả khi tắt màn hình hay đang ở app khác. Android luôn hiện thông báo “Finy đang nghe” và chấm micro xanh; tốn pin hơn."
+          value={voiceOn}
+          onChange={async (v) => {
+            if (voiceBusy) return;
+            setVoiceBusy(true);
+            try {
+              if (v) await turnOn();
+              else await turnOff();
+            } finally {
+              setVoiceBusy(false);
+            }
+          }}
+        />
+        {voiceError ? (
+          <Txt v="small" color={c.negative}>{voiceError}</Txt>
+        ) : voiceOn ? (
+          <Txt v="small" color={c.positive}>Đang nghe. Thử nói: “Finy ơi, ghi tiền mặt 30 nghìn ăn sáng”, hoặc gọi “Finy” rồi đợi Finy hỏi.</Txt>
+        ) : null}
+        <Txt v="small">
+          Nhận dạng giọng nói chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Khi Finy đang khoá, giọng nói chỉ ghi thêm được khoản tiền mặt hay giao dịch; Finy không đọc số liệu, không sửa hay xoá gì. Mở khoá Finy thì hỏi gì cũng được.
+        </Txt>
+        <Row style={{ gap: 10 }}>
+          <Btn label="Nói với Finy" kind="ghost" icon="mic-outline" style={{ flex: 1 }} onPress={() => talk()} />
+          <Btn label="Cài đặt pin" kind="ghost" icon="battery-half-outline" style={{ flex: 1 }} onPress={() => Linking.openSettings()} />
+        </Row>
+        <Txt v="small">Để Android không tắt Finy khi chạy nền: Cài đặt pin → Pin → Không hạn chế.</Txt>
       </Card>
 
       <Card style={{ gap: 12 }}>

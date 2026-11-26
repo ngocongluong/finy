@@ -8,11 +8,13 @@ import { Alert, AppState, Modal, View } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LockScreen } from '../components/LockScreen';
+import { VoiceBanner } from '../components/VoiceBanner';
 import { fmtVND } from '../lib/format';
 import * as gmail from '../lib/gmail';
 import { creditOverMessage, isSyncing, runSync, shouldAlertCreditOver } from '../lib/hsbc';
 import { autoLockSuspended } from '../lib/lockGuard';
 import { useStore } from '../lib/store';
+import { resumeVoice } from '../lib/voice';
 
 export default function RootLayout() {
   const phase = useStore((s) => s.phase);
@@ -31,6 +33,8 @@ export default function RootLayout() {
     useStore.getState().boot();
     // FLAG_SECURE: no screenshots, no screen recording, blank preview in the app switcher.
     if (!Constants.expoConfig?.extra?.allowScreenshots) ScreenCapture.preventScreenCaptureAsync().catch(() => {});
+    // "Always listening" starts with the app (Android allows it only while Finy is on screen).
+    resumeVoice().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -72,6 +76,8 @@ export default function RootLayout() {
       } else if (state === 'active') {
         if (leftAt && Date.now() - leftAt >= settings.autoLockSec * 1000) lock();
         leftAt = 0;
+        // Android may have closed the listening service while Finy was away.
+        resumeVoice().catch(() => {});
       }
     });
     return () => sub.remove();
@@ -85,10 +91,13 @@ export default function RootLayout() {
         <ThemeProvider value={navTheme}>
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: bg }, animation: 'slide_from_right' }} />
         </ThemeProvider>
+        <VoiceBanner />
       </View>
       {/* A Modal so the lock also covers any sheet that was open when the app was left. */}
       <Modal visible={phase !== 'ready'} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={() => {}}>
         {phase === 'boot' ? <View style={{ flex: 1, backgroundColor: '#0B0D12' }} /> : <LockScreen mode={phase === 'setup' ? 'setup' : 'unlock'} />}
+        {/* A voice note taken while locked shows over the lock screen. */}
+        <VoiceBanner />
       </Modal>
     </SafeAreaProvider>
     </KeyboardProvider>

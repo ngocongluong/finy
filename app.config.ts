@@ -50,6 +50,14 @@ const config: ExpoConfig = {
     'expo-secure-store',
     'expo-font',
     'expo-local-authentication',
+    [
+      'expo-speech-recognition',
+      {
+        microphonePermission: 'Finy dùng micro để nghe bạn gọi tên và ra lệnh.',
+        // Google's recognizers: on-device (Android System Intelligence) and Speech Services.
+        androidSpeechServicePackages: ['com.google.android.as', 'com.google.android.tts', 'com.google.android.googlequicksearchbox'],
+      },
+    ],
     './plugins/withFinyAndroid.js',
   ],
   extra: {
