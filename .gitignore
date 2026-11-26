@@ -1,0 +1,38 @@
+# Secrets & personal financial data — NEVER commit
+.credentials
+.credentials.*
+secrets/
+*.local.json
+*.keystore
+*.jks
+google-services.json
+
+# Node / Expo / React Native
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Android / iOS build output
+android/
+ios/
+*.apk
+*.aab
+.gradle/
+build/
+local.properties
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Real bank email sample (personal data)
+hsbc_example.md
+google-services*.json
+
+# Bank statements (personal data)
+*.pdf

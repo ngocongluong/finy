@@ -1,1 +1,114 @@
-# finy
+# Finy
+
+Trợ lý tài chính cá nhân chạy trên Android (Expo / React Native), giao diện tối, dữ liệu mã hoá trên máy, dùng Claude để tư vấn và tự chỉnh giao diện.
+
+App dành cho **một người dùng**: không có máy chủ, không có tài khoản. Mọi dữ liệu nằm trên điện thoại.
+
+## Tính năng
+
+| Tab | Làm được gì |
+|---|---|
+| **Tổng quan** | Thẻ tín dụng (kỳ này, và từ ngày 15 thêm kỳ trước đã chốt sổ), tóm tắt tháng (Thu, Chi, Để dành được, Chi/Thu), khoản chi lớn nhất (thẻ tín dụng tính theo thực chi), giao dịch gần đây, dự phóng dài hạn. Nút con mắt để hiện số tiền. |
+| **Ngân sách** | Nhập nguồn thu cố định và khoản chi cố định hàng tháng; Finy lập bảng thu / chi / để dành cho 6, 12, 24 hoặc 36 tháng tới, hoặc theo từng năm (từ năm nay tới 30 năm sau). Chạm một tháng để mở chi tiết: mục **Thu** và mục **Chi** tách riêng, sửa được từng dòng cho riêng tháng đó, thêm khoản phát sinh, và phần **Chi tín dụng** của kỳ sao kê. Mỗi khoản chi có vòng tròn để **tick đã chi**; khung tóm tắt tháng có dự chi, đã chi (tổng các khoản đã tick, còn bao nhiêu chưa chi), **dự kiến để dành** (thu − dự chi) và **thực tế để dành** (thu − đã chi). Tháng đã chi xong mọi khoản có dấu tick xanh trong bảng. Đầu trang chi tiết có khung **cuối tháng**: tiền dự kiến có (như cột Dự kiến), dư nợ vay còn lại sau kỳ trả tháng đó, và phần còn lại sau nợ. Kèm danh sách tài khoản tạo nên tổng tiền hiện có. |
+| **Giao dịch** | Nhập chi tiêu hằng ngày; đồng bộ giao dịch thẻ tín dụng HSBC từ Gmail (tự chạy mỗi lần mở app). |
+| **Tiền mặt** | Trang ghi chú nhanh các khoản chi bằng tiền mặt (nút tiền ở đầu trang Tổng quan, hoặc trong tab Giao dịch): nhập số tiền, chạm một ghi chú hay dùng hoặc gõ ghi chú, chọn ngày, Ghi lại. Danh sách theo từng ngày và tổng của tháng. Chỉ để ghi chú, **không tính vào bảng thu chi** (bảng đã có khoản cố định dự trù cho tiền mặt); có thể chọn khoản dự trù đó để xem đã ghi bao nhiêu, còn bao nhiêu trong tháng. |
+| **Gọi Finy bằng giọng nói** | Cài đặt → "Luôn nghe “Finy”": Finy lắng nghe cả khi chạy nền (Android hiện thông báo "Finy đang nghe", có nút Tắt). Gọi "Finy" (hoặc "Finy ơi, …" cả câu): Finy hỏi "Dạ, bạn cần gì?", ghi lại khoản bạn nói và đọc xác nhận. Nhận dạng giọng nói tiếng Việt chạy ngay trên máy; chỉ câu nói sau tên Finy được gửi tới Claude. Vì bảo mật, qua giọng nói Finy chỉ nhận ghi chép (tiền mặt, giao dịch), dù app đang khoá hay đang mở: không trả lời câu hỏi về tiền bạc, không đọc số liệu, không sửa hay xoá. Mỗi lần ghi bằng giọng nói được lưu lại trong khung chat (🎙). Nút micro trong khung chat bắt đầu ngay mà không cần gọi tên. |
+| **Kế hoạch** | Dự phóng tài sản ròng 5–10 năm theo 3 kịch bản, khoản vay, các khoản chi lớn, bảng từng năm. |
+| **Finy** | Trò chuyện với Claude: tư vấn dựa trên số liệu thật và sửa mọi con số trong app theo lời bạn ("tháng 12 lương 60 triệu", "thêm học phí 30 triệu vào tháng 1 và 6", "dự chi tín dụng còn 30 triệu", "sửa giao dịch cà phê thành 80k"), kể cả giao diện ("đổi sang tông xanh lá", "ẩn khối kế hoạch"). |
+
+### Cách tính
+
+- **Thu của một tháng** = tổng thu cố định + thu phát sinh của tháng đó. **Chi** = tổng chi cố định (gồm trả nợ) + chi phát sinh của tháng đó.
+- **Để dành được** = thu − chi. Bạn không nhập số để dành; Finy tính ra. Số âm nghĩa là tháng đó thiếu hụt.
+- **Chi/Thu** = chi / thu của tháng.
+- Khoản lặp lại mọi tháng là **cố định**; khoản chỉ có ở vài tháng (thưởng Tết, học phí theo kỳ, sửa xe) là **phát sinh**, khi thêm có thể chọn nhiều tháng cùng lúc. Một khoản cố định có thể mang **số tiền riêng cho một tháng** (kể cả 0) mà không ảnh hưởng các tháng khác. Khi thêm hoặc sửa một khoản thu (hay chi) cố định, chọn **Toàn thời gian** (một số tiền cho mọi tháng) hoặc **Theo giai đoạn**: thêm bao nhiêu giai đoạn tuỳ ý, mỗi giai đoạn từ tháng – đến tháng (chạm để chọn; giai đoạn đầu có thể "từ trước", giai đoạn cuối có thể "không thời hạn") với số tiền riêng. Bảng thu chi, chi tiết tháng và kế hoạch dài hạn dùng đúng số tiền của giai đoạn chứa tháng đó; ngoài các giai đoạn, khoản đó không được tính.
+- **Thẻ tín dụng**: *dự chi* mỗi kỳ sao kê nhập ở Ngân sách → Cố định → Dự chi tín dụng, gồm một hay nhiều khoản, mỗi khoản có ghi chú và áp dụng chỉ tháng này, một giai đoạn từ tháng – đến tháng, hoặc toàn bộ thời gian; bên ngoài hiện tổng dự chi kèm các ghi chú nối bằng dấu phẩy. Khoản chỉ áp dụng cho một tháng chỉ hiện ở tháng đó: không nằm trong Chi cố định hàng tháng và không hiện khi xem các tháng khác. Kỳ sao kê chốt vào ngày sao kê (mặc định 14, đổi trong Cài đặt) và được trả bằng lương của tháng có ngày chốt đó: kỳ 15/11–14/12 thuộc tháng 12. *Đã xài* = tổng giao dịch thẻ trong kỳ (trừ hoàn tiền). Khi kỳ còn mở, chi của tháng tính theo dự chi (hoặc số đã xài nếu nhiều hơn); khi kỳ đã chốt, số đã xài thực tế thay cho dự chi. Tổng quan hiện kỳ hiện tại, và từ ngày 15 hiện thêm kỳ vừa chốt; chạm vào để xem toàn bộ giao dịch của kỳ (kèm giờ:phút:giây). Khi đã xài vượt dự chi, Finy cảnh báo ở Tổng quan và bật thông báo sau khi đồng bộ. Giao dịch ngoại tệ được quy ra VND từ chênh lệch dư nợ giữa hai email liên tiếp (không được thì ước tính theo tỷ giá, ghi rõ "ước tính"). Khoản trả qua thẻ mà HSBC không gửi email (như trả góp) nhập thành khoản chi cố định có bật "Trả qua thẻ tín dụng"; khoản này được cộng vào mỗi kỳ. Hoàn tiền cashback không có email nên không được tính.
+- **Tiền đang có / đang nợ**: đầu tab Bảng thu chi có khung Tiền đang có (chạm để nhập), Tiền đang nợ (dư nợ các khoản vay ngân hàng hiện tại) và phần còn lại. Cột **Dự kiến** trong bảng = tiền đang có + để dành cộng dồn đến cuối từng tháng, tính từ tháng nhập tiền đang có. Kế hoạch dài hạn xuất phát từ tiền đang có trừ dư nợ vay khi bạn không dùng danh sách tài khoản.
+- **Quản lý khoản vay** (Ngân sách → Cố định): khi thêm khoản vay chọn **Vay ngân hàng** hoặc **Vay người thân**. Vay người thân: nhập số tiền, tháng nhận tiền, thời hạn (theo tháng hoặc theo năm), không lãi hoặc có lãi (lãi đơn %/năm); không trả hàng tháng mà trả một lần cả gốc lẫn lãi vào cuối thời hạn, và số đó được tính vào chi của đúng tháng đến hạn trong bảng thu chi. Dư nợ (gốc + lãi tính đến lúc đó) được cộng vào Tiền đang nợ. Nếu tiền vay chưa có trong Tiền đang có (vay sau này), bật "Tính tiền nhận được vào thu" để cộng vào thu của tháng nhận. Vay ngân hàng: nhập số tiền vay, thời hạn và lãi suất. Khoản vay chia được thành nhiều **giai đoạn** (chọn từ tháng – đến tháng bằng cách chạm), mỗi giai đoạn có lãi suất riêng (cố định hay thả nổi dự kiến) và có thể có khoản trả trước ở đầu giai đoạn (nhập số tiền trả trước; app tính dư nợ còn lại = nợ hiện tại − trả trước). Bật **Trả toàn bộ** để app tự điền toàn bộ dư nợ vào ô trả trước: khoản vay được tất toán trong tháng đó, từ tháng sau không còn trả hàng tháng. Thời hạn vay chỉ đổi ở phần Thời hạn vay; giai đoạn cuối luôn kéo dài đến hết hạn vay. Ở đầu mỗi giai đoạn, số trả mỗi tháng được tính lại theo dư nợ, lãi suất và số tháng còn lại; khoản trả trước tính là tiền chi ra trong tháng đó. App tính số trả mỗi tháng theo kiểu trả góp đều (gốc + lãi), cộng vào chi cố định trong thời gian vay và đưa dư nợ thực vào kế hoạch dài hạn. Đổi số tiền, lãi suất hay thời hạn thì số trả tính lại ngay. Nếu ngân hàng tính khác (lãi theo ngày, phí), bật "Ngân hàng tính số trả khác" để nhập số thực trả; số này tự bỏ khi đổi các thông số trên. Nếu mỗi tháng bạn chuyển vào tài khoản trả vay nhiều hơn số ngân hàng thu, bật "Số tiền thực chi khác số ngân hàng thu" ở giai đoạn đó: số thực chi được tính vào chi hàng tháng (phần dư cũng được xài nên coi như đã chi), còn số ngân hàng thu và dư nợ vẫn theo đúng lịch của ngân hàng: phần chuyển thêm không trừ vào nợ gốc.
+- **Trả góp qua thẻ**: ở Ngân sách → Cố định, mục Trả góp qua thẻ, thêm khoản trả góp với tổng tiền, số tháng và kỳ sao kê trả phần đầu (chọn được kỳ đã qua cho khoản đang trả dở). App chia đều (phần lẻ dồn vào kỳ cuối), cộng một phần vào chi tín dụng của mỗi kỳ, và tự dừng sau kỳ cuối.
+- Mọi số tiền được ẩn mỗi lần mở app. Mỗi mục có con mắt riêng ở góc trên bên phải; màn danh sách (Giao dịch, trò chuyện Finy) có một con mắt ở đầu màn hình. Khoá app thì tất cả ẩn lại. Giao dịch thẻ không tính vào quỹ chi tiêu hằng ngày.
+- **Hạn mức hôm nay** = (quỹ chi tiêu hằng ngày − đã tiêu các ngày trước trong tháng) / số ngày còn lại. Quỹ là khoản chi cố định được bật "quỹ chi tiêu hằng ngày".
+- **Kế hoạch**: mô phỏng theo tháng từ thu chi cố định và các khoản phát sinh đã nhập; thu nhập tăng theo %/năm, chi tiêu tăng theo lạm phát, tiền để dành sinh lãi. Khoản vay có nhập dư nợ sẽ được trả dần và giải phóng dòng tiền khi hết nợ; khoản chưa nhập dư nợ được coi là trả suốt kế hoạch.
+
+## Bảo mật
+
+- Khoá bằng **mã PIN 6 số** và **vân tay**; sai 5 lần thì tạm khoá, thời gian chờ tăng gấp đôi mỗi lần sai tiếp.
+- Tự khoá khi rời app (ngay lập tức, 30 giây hoặc 2 phút).
+- **Chặn chụp/quay màn hình** và ẩn nội dung ở màn hình đa nhiệm (`FLAG_SECURE`).
+- Cơ sở dữ liệu mã hoá bằng **SQLCipher**; khoá 256-bit nằm trong Android Keystore. Tắt sao lưu Android (`allowBackup=false`).
+- Nút ẩn số tiền để tránh bị nhìn lén.
+
+Những gì rời khỏi máy:
+
+- Câu hỏi trong tab Finy kèm bản tóm tắt tài chính hiện tại → gửi tới API của Anthropic.
+- Email HSBC: chỉ email có người gửi thuộc `hsbc.com.vn` / `hsbc.com` / `hsbc.com.hk` mới được đọc (HSBC Việt Nam gửi báo giao dịch thẻ từ `notification.hsbc.com.hk`). Email báo giao dịch thẻ tín dụng (định dạng cố định) được đọc ngay trên máy, không gửi đi đâu. Chỉ email HSBC có định dạng khác mới được gửi tới API của Anthropic để tách số tiền, nơi giao dịch.
+- Yêu cầu đọc thư → gửi tới Gmail API (quyền chỉ-đọc).
+
+**API key của Claude nằm trong file APK.** Ai có file APK đều lấy được key, nên đừng chia sẻ APK. Key không nằm trong repo này.
+
+## Build và cài lên điện thoại
+
+Cần Node 20+, JDK 17, Android SDK.
+
+```bash
+npm install
+echo "sk-ant-..." > .credentials          # API key của Claude (đã gitignore)
+cp seed.example.json secrets/seed.json     # tuỳ chọn: dữ liệu ban đầu (đã gitignore)
+npm run apk                                # tạo dist/finy.apk
+adb install -r dist/finy.apk               # bật USB debugging trên máy trước
+```
+
+`npm run apk` tạo keystore ký riêng ở `secrets/finy.keystore` trong lần chạy đầu và in ra **SHA-1** của chứng chỉ (cần cho bước Gmail bên dưới). Giữ lại thư mục `secrets/`: mất keystore thì không cập nhật đè lên bản đã cài được.
+
+Mặc định chỉ build cho `arm64-v8a` (Galaxy S23 và mọi máy đời mới). Build thêm kiến trúc khác: `FINY_ARCHS=arm64-v8a,x86_64 npm run apk`.
+
+Các file **không bao giờ được commit** (đã có trong `.gitignore`): `.credentials`, `secrets/`, `android/`, `dist/`.
+
+## Kết nối Gmail (làm một lần)
+
+Google yêu cầu mỗi app phải có một *OAuth client* gắn với package và chữ ký của APK trước khi được đọc Gmail. Google không có API để tạo phần này, nên có vài cú bấm phải làm tay trên trình duyệt (đăng nhập bằng chính tài khoản Gmail nhận thư HSBC).
+
+Cách ngắn nhất là qua Firebase, vì Firebase tự tạo OAuth client và màn hình đồng ý:
+
+1. Chọn (hoặc tạo) một project trên [Firebase Console](https://console.firebase.google.com/). Trong *Project settings* thêm app Android với package `com.finy.app` và **SHA-1** mà `npm run apk` in ra. Bật **Gmail API** cho project đó trong [Google Cloud Console](https://console.cloud.google.com/apis/library/gmail.googleapis.com).
+2. Vào **Authentication → Sign-in method → Google → Enable**, chọn email hỗ trợ, **Save**. Bước này khiến Google tạo OAuth client cho app.
+3. Trên điện thoại: **Cài đặt → Kết nối Gmail**, chọn tài khoản và đồng ý cho Finy đọc thư. App sẽ lấy giao dịch HSBC ngay sau đó, và tự đồng bộ lại mỗi lần mở app.
+
+Có thể mở thẳng màn đăng nhập từ máy tính: `adb shell am start -a android.intent.action.VIEW -d "finy://settings?gmail=connect" com.finy.app` (app sẽ hỏi PIN trước).
+
+Ghi chú:
+
+- Vì app chưa được Google xác minh, màn đăng nhập hiện cảnh báo "Google hasn't verified this app": bấm **Advanced → Go to … (unsafe)** để tiếp tục. Đây là app của chính bạn, chỉ xin quyền *đọc* thư.
+- Nếu Google báo "Access blocked … has not completed the Google verification process", màn hình đồng ý đang ở chế độ *Testing*: vào [Google Auth Platform → Audience](https://console.cloud.google.com/auth/audience) của project, thêm địa chỉ Gmail của bạn vào **Test users** (hoặc bấm **Publish app**). Ở chế độ Testing, Google bắt cấp quyền lại mỗi 7 ngày.
+- Lỗi `DEVELOPER_ERROR` trong app nghĩa là chưa có OAuth client khớp package + SHA-1 của APK đang cài (chưa làm bước 2, hoặc APK được ký bằng keystore khác).
+- Bộ lọc email mặc định là `from:HSBC@notification.hsbc.com.hk newer_than:60d` (địa chỉ HSBC Việt Nam gửi báo giao dịch thẻ), sửa được trong Cài đặt. App chỉ đọc thư từ đúng tên miền HSBC; kết quả mỗi lần đồng bộ hiện ở tab Giao dịch.
+
+## Finy tự chỉnh giao diện như thế nào
+
+Toàn bộ giao diện được sinh từ một cấu hình duy nhất (`UiConfig` trong [src/lib/types.ts](src/lib/types.ts)): bảng màu, độ bo góc, cỡ chữ, mật độ, cách hiện số tiền, tên app, thứ tự và ẩn/hiện các khối ở Tổng quan, và các thẻ tuỳ biến. Claude sửa cấu hình này qua công cụ `update_ui`. App từ chối bảng màu thiếu tương phản (chữ khó đọc) và báo lại để Claude chọn màu khác. Mọi thay đổi đều hoàn tác được (nút hoàn tác ở tab Finy hoặc trong Cài đặt). Màn hình khoá luôn dùng giao diện gốc.
+
+Những gì nằm ngoài cấu hình (thêm màn hình mới, đổi bố cục bên trong một khối) cần sửa code.
+
+## Cấu trúc mã nguồn
+
+```
+src/app/            màn hình (Expo Router): 5 tab + month/[month] (chi tiết tháng) + settings
+src/components/     ui.tsx (khối giao diện theo theme), charts.tsx, sheets.tsx, LockScreen.tsx
+src/lib/
+  store.ts          trạng thái toàn app, ghi xuống DB mã hoá
+  db.ts             SQLite + SQLCipher
+  security.ts       PIN, vân tay, khoá DB
+  finance.ts        bảng thu chi theo tháng, kỳ sao kê tín dụng, hạn mức ngày (thuần, có test)
+  plan.ts           dự phóng 5–10 năm                    (thuần, có test)
+  theme.ts          cấu hình giao diện + kiểm tra tương phản (thuần, có test)
+  claude.ts         Claude: tư vấn + công cụ sửa dữ liệu / giao diện
+  gmail.ts, hsbc.ts đọc Gmail, nhập giao dịch HSBC
+  mailText.ts       đọc email thẻ tín dụng HSBC ngay trên máy  (thuần, có test)
+plugins/            config plugin ký APK bằng keystore riêng
+tests/              npm test
+```
+
+```bash
+npm test            # test phần tính toán
+npm run typecheck
+```

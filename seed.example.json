@@ -1,0 +1,10 @@
+{
+  "fixed": [
+    { "name": "Lương", "amount": 30000000, "direction": "in" },
+    { "name": "Tiền nhà", "amount": 8000000, "direction": "out", "kind": "expense" },
+    { "name": "Chi tiêu hằng ngày", "amount": 6000000, "direction": "out", "kind": "expense", "daily": true },
+    { "name": "Trả góp", "amount": 3000000, "direction": "out", "kind": "debt" }
+  ],
+  "oneOffs": [{ "month": "2027-01", "name": "Thưởng Tết", "amount": 30000000, "direction": "in" }],
+  "accounts": [{ "name": "Tài khoản chính", "kind": "bank", "balance": 50000000 }]
+}
