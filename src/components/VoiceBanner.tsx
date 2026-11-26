@@ -15,13 +15,13 @@ export function VoiceBanner() {
   const status = useVoice((s) => s.status);
   const heard = useVoice((s) => s.heard);
   const reply = useVoice((s) => s.reply);
-  if (status === 'off' || status === 'listening') return null;
+  if (status === 'off' || status === 'listening' || status === 'enrolling') return null;
 
   const line =
     status === 'asking'
       ? 'Dạ, Finy nghe. Bạn cần ghi gì?'
       : status === 'command'
-        ? heard || 'Đang nghe…'
+        ? 'Đang nghe…'
         : status === 'working'
           ? `“${heard}” · đang làm…`
           : reply;

@@ -1,42 +1,61 @@
-// Talking to Finy. When "always listening" is on, Finy listens for its name -
-// also in the background, behind a foreground service with an ongoing
-// notification - asks what you need, takes the entry down, and confirms out
-// loud. The mic button in the chat starts the same exchange without the name.
+// Talking to Finy. Finy's ears (modules/finy-voice, sherpa-onnx on the phone)
+// listen for its name - all the time when "always listening" is on, also in
+// the background behind a foreground service. When the owner's voice print is
+// enrolled, only the owner's voice gets an answer: other voices calling Finy
+// are ignored. Then Finy records the request, the phone's Vietnamese speech
+// recognizer writes it down, Finy takes the entry down and confirms out loud.
+// The mic button in the chat starts the same exchange without the name.
 //
-// Privacy: recognition runs on the phone only (no audio leaves it); only the
-// words said after "Finy" are sent to Claude. By voice Finy only takes down
-// entries (a cash note or a transaction), locked or not, and never answers
-// questions about money: it gets none of the user's data to answer from (see
-// voiceEntry in claude.ts). Anything else is done in the app.
+// Privacy: the microphone audio stays on the phone (the keyword spotter, the
+// voice check and the speech recognizer all run on it; a recorded request is
+// deleted as soon as it is written down). Only the words of the request go to
+// Claude. By voice Finy only takes entries down (a cash note or a
+// transaction) and never answers questions about money (see voiceEntry in
+// claude.ts).
 //
 // Timing: React Native pauses JavaScript timers while the app is in the
 // background, so every wait here goes through FinyVoice.sleep (native).
 import type Anthropic from '@anthropic-ai/sdk';
-import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
+import { AudioEncodingAndroid, ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import { create } from 'zustand';
-import FinyVoice from '../../modules/finy-voice';
+import FinyVoice, { type Utterance } from '../../modules/finy-voice';
 import { voiceEntry } from './claude';
 import { uid } from './format';
-import { batteryAsked, DEFAULT_VOICE_STYLE, getVoicePref, getVoiceStyle, hasPin, setBatteryAsked, setVoicePref, setVoiceStyle, type VoiceStyle } from './security';
+import {
+  batteryAsked,
+  DEFAULT_VOICE_STYLE,
+  getVoicePref,
+  getVoicePrintRaw,
+  getVoiceStyle,
+  hasPin,
+  setBatteryAsked,
+  setVoicePref,
+  setVoicePrintRaw,
+  setVoiceStyle,
+  type VoiceStyle,
+} from './security';
 import { useStore } from './store';
+import { buildPrint, parsePrint, SHORT_MS, verify, type Strictness, type VoicePrint } from './voicePrint';
 import { asksBack, findWake, isRequest, speakable } from './voiceText';
 
-export type VoiceStatus = 'off' | 'listening' | 'asking' | 'command' | 'working' | 'speaking';
+export type VoiceStatus = 'off' | 'listening' | 'asking' | 'command' | 'working' | 'speaking' | 'enrolling';
 
 interface VoiceState {
   status: VoiceStatus;
   /** Listening for "Finy" all the time (the setting is on and listening started). */
   always: boolean;
-  /** What was heard of the current request (live while it is being said). */
+  /** The request being handled. */
   heard: string;
   /** Finy's last answer. */
   reply: string;
   /** Why listening could not start, or stopped. */
   error: string | null;
+  /** The owner's voice is enrolled: only it gets an answer. */
+  enrolled: boolean;
 }
 
-export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null }));
+export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null, enrolled: false }));
 let statusSince = Date.now(); // when the status last changed (the watchdog reads it)
 const setV = (p: Partial<VoiceState>) => {
   if (p.status && p.status !== useVoice.getState().status) {
@@ -45,255 +64,261 @@ const setV = (p: Partial<VoiceState>) => {
   }
   useVoice.setState(p);
 };
-/** Steps and error codes only, never what was said: enough to follow an exchange in logcat. */
+/** Steps, scores and error codes only, never what was said: enough to follow an exchange in logcat. */
 const log = (msg: string) => console.log(`[finy] voice ${msg}`);
 
 const LANG = 'vi-VN';
 /** Google's on-device recognizer (Android System Intelligence). */
 const ON_DEVICE = 'com.google.android.as';
 const ASK = 'Dạ, Finy nghe. Bạn cần ghi gì?';
+const NOT_HEARD = 'Mình chưa nghe rõ.';
 const LISTEN_TITLE = 'Finy đang nghe';
-// "Finy" is not a Vietnamese word: the recognizer often drops a short call to it altogether.
-// Hints spelled with Vietnamese syllables it knows (and that findWake accepts) make it far
-// more likely to write something down.
-const WAKE_HINTS = ['Finy', 'Finy ơi', 'Phi ni', 'Phi ni ơi', 'Phai ni', 'Phai ni ơi', 'Fini'];
 const LISTEN_TEXT = 'Gọi “Finy” để nhờ ghi chép · chạm để mở Finy';
+// Keyword spotter tuning, measured on test recordings: hears "Finy" said several ways, not
+// everyday Vietnamese ("phim", "phí", "phải", "cà phê"…).
+const KWS_SCORE = 2.0;
+const KWS_THRESHOLD = 0.15;
+const HINTS = ['Finy', 'tiền mặt', 'nghìn', 'triệu', 'chuyển khoản'];
 
 const sleep = (ms: number): Promise<void> => (FinyVoice ? FinyVoice.sleep(ms) : new Promise((r) => setTimeout(r, ms)));
 const background = () => AppState.currentState !== 'active';
 
-type Kind = 'wake' | 'command';
-let session: Kind | null = null; // what the running recognition is for
-let running = false; // between start() and its 'end' event
-let next: Kind | null = null; // to start once the running recognition has ended
-let failures = 0; // recognitions in a row that ended without hearing anything
-let said = ''; // finished sentences of the request being said
-let saying = ''; // the sentence being said right now
-let tick = 0; // bumped by every result: a pending wait that sees a newer tick gives up
-let wakeRest: string | null = null; // the name was heard in this sentence; what followed it so far
-let exchange = 0; // bumped when an exchange is cancelled: its pending steps give up
 type Params = Anthropic.Beta.BetaMessageParam;
+let exchange = 0; // bumped when an exchange is cancelled: its pending steps give up
+let busy = false; // an exchange (or an enrollment) is under way
 // Finy asked something back: the next request continues the same exchange.
 let conversation: { messages: Params[]; turns: number } | null = null;
 let ready = false;
+let earsFailures = 0;
 // How Finy sounds (Settings); read once, then kept here.
 let style: VoiceStyle | null = null;
 const currentStyle = async (): Promise<VoiceStyle> => (style ??= await getVoiceStyle().catch(() => DEFAULT_VOICE_STYLE));
+// The owner's voice print; undefined until read.
+let print: VoicePrint | null | undefined;
 
 /** Registers the event listeners, once. */
 function init() {
   if (ready) return;
   ready = true;
-  ExpoSpeechRecognitionModule.addListener('result', (e) => onResult(e.results[0]?.transcript ?? '', e.isFinal));
-  ExpoSpeechRecognitionModule.addListener('error', (e) => onError(e.error));
-  ExpoSpeechRecognitionModule.addListener('end', onEnd);
+  ExpoSpeechRecognitionModule.addListener('result', (e) => {
+    const text = e.results[0]?.transcript?.trim();
+    if (transcript && e.isFinal && text) transcript.parts.push(text);
+  });
+  ExpoSpeechRecognitionModule.addListener('error', (e) => log(`recognizer error ${e.error}`));
+  ExpoSpeechRecognitionModule.addListener('end', () => transcript?.done(transcript.parts.join(' ')));
+  FinyVoice?.addListener('onWake', () => {
+    onWake().catch((e) => log(`wake failed: ${e instanceof Error ? e.name : 'error'}`));
+  });
+  FinyVoice?.addListener('onEarsError', (e) => {
+    log(`ears stopped: ${e.message}`);
+    if (useVoice.getState().always) retryEars();
+  });
   // "Tắt" on the listening notification.
   FinyVoice?.addListener('onStopRequested', () => {
     turnOff().catch(() => undefined);
   });
 }
 
-// ---- the recognizer: one recognition at a time ----
+// ---- the ears ----
 
-function listen(kind: Kind) {
-  next = kind;
-  if (running) ExpoSpeechRecognitionModule.abort(); // its 'end' starts `next`
-  else begin();
-}
-
-function begin() {
-  const kind = next;
-  next = null;
-  if (!kind || running) return;
-  session = kind;
-  running = true;
-  said = '';
-  saying = '';
-  wakeRest = null;
-  log(`listen ${kind}`);
+async function startEars(): Promise<string | null> {
+  if (!FinyVoice) return 'Bản Finy này chưa có phần nghe.';
+  if (FinyVoice.earsRunning()) return null;
   try {
-    ExpoSpeechRecognitionModule.start({
-      lang: LANG,
-      interimResults: true,
-      // Continuous: no start/stop beep, and the app records the microphone itself,
-      // which the foreground service allows in the background.
-      continuous: true,
-      maxAlternatives: 1,
-      requiresOnDeviceRecognition: true,
-      contextualStrings: kind === 'wake' ? WAKE_HINTS : ['Finy', 'tiền mặt', 'nghìn', 'triệu'],
-    });
-  } catch {
-    running = false;
-    session = null;
-    failures++;
-    if (kind === 'wake') retryWake();
+    await FinyVoice.earsStart(KWS_SCORE, KWS_THRESHOLD);
+    earsFailures = 0;
+    log('ears on');
+    return null;
+  } catch (e) {
+    log(`ears failed: ${e instanceof Error ? e.message : 'error'}`);
+    return 'Không mở được micro. Có thể app khác đang dùng micro.';
   }
 }
 
-function halt() {
-  next = null;
-  if (running) ExpoSpeechRecognitionModule.abort();
+/** Opens the microphone again after a failure, waiting longer each time (up to 30 s). */
+async function retryEars() {
+  const delay = Math.min(30_000, 1000 * 2 ** Math.min(earsFailures++, 5));
+  await sleep(delay);
+  if (useVoice.getState().always && !FinyVoice?.earsRunning() && !busy) await startEars();
 }
 
-/** Starts listening for the name again after a pause that grows while nothing works. */
-function retryWake() {
-  const delay = failures ? Math.min(30_000, 500 * 2 ** Math.min(failures, 6)) : 250;
-  next = 'wake';
-  sleep(delay).then(() => {
-    if (next === 'wake' && !running && useVoice.getState().always && useVoice.getState().status === 'listening') begin();
+const discard = (u: Utterance | null | undefined) => {
+  if (u?.path) FinyVoice?.deleteFile(u.path);
+};
+
+/** Writes down a recorded utterance with the phone's Vietnamese recognizer (on the phone, no network). */
+let transcript: { parts: string[]; done: (text: string) => void } | null = null;
+function transcribe(path: string, speechMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (text: string) => {
+      if (settled) return;
+      settled = true;
+      transcript = null;
+      resolve(text.trim());
+    };
+    transcript = { parts: [], done };
+    try {
+      ExpoSpeechRecognitionModule.start({
+        lang: LANG,
+        interimResults: false,
+        continuous: true,
+        maxAlternatives: 1,
+        requiresOnDeviceRecognition: true,
+        contextualStrings: HINTS,
+        audioSource: { uri: `file://${path}`, audioChannels: 1, audioEncoding: AudioEncodingAndroid.ENCODING_PCM_16BIT, sampleRate: 16000 },
+      });
+    } catch {
+      done('');
+      return;
+    }
+    // It normally ends by itself once the file is read; if not, stop it and keep what it wrote.
+    sleep(Math.min(30_000, 5000 + speechMs * 2)).then(() => {
+      if (settled) return;
+      log('recognizer slow: stopped');
+      ExpoSpeechRecognitionModule.stop();
+      sleep(2000).then(() => {
+        if (!settled && transcript) done(transcript.parts.join(' '));
+      });
+    });
   });
 }
 
-function onResult(text: string, final: boolean) {
-  if (session === 'wake') {
-    // Speech the recognizer could not write down: a missed call shows up as this in the log.
-    if (final && !text && wakeRest === null) log('speech without words');
-    if (text) failures = 0;
-    const w = text ? findWake(text) : null;
-    if (w) wakeRest = w.rest;
-    // The sentence ended. The recognizer often finishes a lone "Finy" with an empty
-    // result, so what the earlier partial results heard counts.
-    if (final && wakeRest !== null) {
-      const rest = wakeRest;
-      wakeRest = null;
-      ++tick;
-      log(`wake${isRequest(rest) ? ' with request' : ''}`);
-      if (isRequest(rest)) handle(rest);
-      else ask();
-      return;
-    }
-    if (!w) return;
-    // The name was heard: if the sentence never ends, ask anyway.
-    const t = ++tick;
-    sleep(2500).then(() => {
-      if (t === tick && session === 'wake' && wakeRest !== null) {
-        wakeRest = null;
-        log('wake (no end of sentence)');
-        ask();
-      }
-    });
-    return;
-  }
-  if (!text) return;
-  failures = 0;
-  const t = ++tick;
-  if (session === 'command') {
-    if (final) {
-      said = `${said} ${text}`.trim();
-      saying = '';
-    } else saying = text;
-    setV({ heard: `${said} ${saying}`.trim() });
-    // A finished sentence and then a moment of silence: the request is complete.
-    if (final) {
-      sleep(1300).then(() => {
-        if (t === tick && session === 'command' && useVoice.getState().status === 'command') handle(said);
-      });
-    }
-  }
+// ---- the owner's voice ----
+
+async function loadPrint(): Promise<VoicePrint | null> {
+  if (print === undefined) print = parsePrint(await getVoicePrintRaw());
+  setV({ enrolled: !!print });
+  return print;
 }
 
-function onError(code: string) {
-  log(`error ${code}`);
-  // Stopped on purpose (a new recognition, or an exchange): not a failure.
-  if (code === 'aborted') return;
-  if (code === 'not-allowed') turnOff('Finy chưa được phép dùng micro.').catch(() => undefined);
-  else if (code === 'language-not-supported' || code === 'service-not-allowed') {
-    turnOff('Máy chưa có gói nhận dạng tiếng Việt ngay trên máy. Bật lại để tải.').catch(() => undefined);
-  } else failures++;
-  // Everything else (silence, microphone busy, interrupted…) ends the recognition; 'end' takes over.
-}
-
-function onEnd() {
-  const was = session;
-  running = false;
-  session = null;
-  if (next) {
-    sleep(150).then(begin);
-    return;
+/** Whether this voice may give Finy a request: anyone until a voice is enrolled, then only the owner. */
+async function ownerSpeaking(u: Utterance, what: string): Promise<boolean> {
+  const p = await loadPrint();
+  if (!p) return true;
+  if (!u.embedding) {
+    log(`${what}: too short to check the voice`);
+    return false;
   }
-  const v = useVoice.getState();
-  if (was === 'wake' && v.always && v.status === 'listening') retryWake();
-  else if (was === 'command' && v.status === 'command') {
-    // It stopped before the request was finished (a long silence, an error).
-    const text = `${said} ${saying}`.trim();
-    if (text) handle(text);
-    else nothingHeard();
-  }
+  const r = verify(p, u.embedding, u.speechMs);
+  log(`${what}: ${r.ok ? 'owner' : 'not the owner'} (${r.score} vs ${r.threshold}, ${u.speechMs} ms)`);
+  return r.ok;
 }
 
 // ---- the exchange ----
 
 /**
  * Reads text aloud; resolves when done, or after a while if the voice engine
- * does not answer. Speech goes through Finy's own module, which reconnects to
- * the voice engine when Android stopped it in the background.
+ * does not answer. The ears are muted meanwhile: Finy must not hear itself.
  */
-function say(text: string, styleOverride?: VoiceStyle): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      resolve();
-    };
-    if (FinyVoice) {
-      const engine = FinyVoice;
-      (styleOverride ? Promise.resolve(styleOverride) : currentStyle())
-        .then((s) => engine.speak(text, LANG, s.voice, s.pitch, s.rate))
-        .then(
-          (ok) => {
-            if (!ok) log('speak failed');
-            finish();
-          },
-          () => {
-            log('speak failed');
-            finish();
-          },
-        );
-    } else finish();
-    // Only if the voice engine never answers: it can take a few seconds to start, and
-    // listening again over the answer would cut it off.
-    sleep(Math.min(60_000, 8000 + text.length * 150)).then(finish);
-  });
+async function say(text: string, styleOverride?: VoiceStyle): Promise<void> {
+  FinyVoice?.earsMute(true);
+  try {
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      if (FinyVoice) {
+        const engine = FinyVoice;
+        (styleOverride ? Promise.resolve(styleOverride) : currentStyle())
+          .then((s) => engine.speak(text, LANG, s.voice, s.pitch, s.rate))
+          .then(
+            (ok) => {
+              if (!ok) log('speak failed');
+              finish();
+            },
+            () => {
+              log('speak failed');
+              finish();
+            },
+          );
+      } else finish();
+      // Only if the voice engine never answers.
+      sleep(Math.min(60_000, 8000 + text.length * 150)).then(finish);
+    });
+    // The end of Finy's voice still in the room.
+    await sleep(300);
+  } finally {
+    FinyVoice?.earsMute(false);
+  }
 }
 
-/** Asks what the user needs, then listens for the request. */
-async function ask() {
+async function tell(text: string) {
+  setV({ status: 'speaking', reply: text });
+  if (background()) FinyVoice?.showPrompt('Finy', text);
+  await say(text);
+}
+
+/** "Finy" was heard. */
+async function onWake() {
+  if (busy || useVoice.getState().status !== 'listening' || !FinyVoice) return;
+  busy = true;
   const ex = exchange;
-  ++tick;
-  halt();
+  try {
+    log('wake');
+    // The call, and whatever follows it in the same breath (the name was said up to ~1.6 s ago).
+    const u = await FinyVoice.earsRecord(12_000, 1500, 1800, 800);
+    if (ex !== exchange || !u?.path) {
+      discard(u);
+      if (!u?.path) log('wake: nothing recorded');
+      return;
+    }
+    // Another voice calling Finy gets no answer at all.
+    if (!(await ownerSpeaking(u, 'call'))) {
+      discard(u);
+      return;
+    }
+    let request = '';
+    if (u.speechMs >= SHORT_MS) {
+      // Probably more than the name: "Finy ơi, ghi tiền mặt 50 nghìn".
+      setV({ status: 'command', heard: '' });
+      const text = await transcribe(u.path, u.speechMs);
+      const w = findWake(text);
+      request = w ? w.rest : text;
+      if (!isRequest(request)) request = '';
+    }
+    discard(u);
+    if (ex !== exchange) return;
+    if (request) await handle(request);
+    else await askAndHandle();
+  } finally {
+    busy = false;
+    if (ex === exchange) resumeIdle();
+  }
+}
+
+/** Asks what the user needs, then listens. */
+async function askAndHandle() {
+  const ex = exchange;
   setV({ status: 'asking', heard: '', reply: '' });
   if (background()) FinyVoice?.showPrompt('Finy', ASK);
   await say(ASK);
   if (ex !== exchange) return;
-  listenForRequest();
+  await listenAndHandle();
 }
 
-function listenForRequest() {
-  setV({ status: 'command', heard: '' });
-  listen('command');
-  // Nothing said at all: give up after a while.
-  const t = ++tick;
-  sleep(12_000).then(() => {
-    if (t === tick && useVoice.getState().status === 'command') nothingHeard();
-  });
-}
-
-async function nothingHeard() {
+/** Records the request, checks the voice, writes it down and does it. */
+async function listenAndHandle() {
+  if (!FinyVoice) return;
   const ex = exchange;
-  ++tick;
-  halt();
-  conversation = null;
-  setV({ status: 'speaking', reply: 'Mình chưa nghe rõ.' });
-  await say('Mình chưa nghe rõ.');
-  if (ex === exchange) resume();
+  setV({ status: 'command', heard: '' });
+  const u = await FinyVoice.earsRecord(15_000, 8000, 0, 1000);
+  if (ex !== exchange) return discard(u);
+  if (!u?.path) return tell(NOT_HEARD);
+  if (!(await ownerSpeaking(u, 'request'))) return discard(u);
+  const text = await transcribe(u.path, u.speechMs);
+  discard(u);
+  if (ex !== exchange) return;
+  if (!text) return tell(NOT_HEARD);
+  await handle(text);
 }
 
 /** Does what was asked and answers. */
 async function handle(text: string) {
   const ex = exchange;
-  ++tick;
-  halt();
   setV({ status: 'working', heard: text, reply: '' });
   if (background()) FinyVoice?.showPrompt('Finy', `“${text}” · đang làm…`);
   let reply: string;
@@ -309,11 +334,7 @@ async function handle(text: string) {
   await say(speakable(reply));
   if (ex !== exchange) return;
   // Finy asked something back: listen for the answer (a few times at most).
-  if (asksBack(reply) && conversation && conversation.turns < 3) listenForRequest();
-  else {
-    conversation = null;
-    resume();
-  }
+  if (asksBack(reply) && conversation && conversation.turns < 3) await listenAndHandle();
 }
 
 /**
@@ -342,26 +363,30 @@ async function act(text: string): Promise<string> {
   return r.reply;
 }
 
-/** After an exchange: back to listening for the name, or off. */
-function resume() {
+/** After an exchange: back to listening for the name, or the ears off. */
+function resumeIdle() {
+  conversation = null;
   if (useVoice.getState().always) {
     setV({ status: 'listening' });
-    listen('wake');
-  } else setV({ status: 'off' });
+    if (!FinyVoice?.earsRunning()) startEars();
+  } else {
+    setV({ status: 'off' });
+    FinyVoice?.earsStop();
+  }
 }
 
 // ---- turning it on and off ----
 
 /** Whether Vietnamese can be recognized on the phone; otherwise why not (and the download is started). */
-async function vietnameseReady(): Promise<true | string> {
+async function vietnameseReady(): Promise<string | null> {
   if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) return 'Máy chưa bật dịch vụ nhận dạng giọng nói của Google.';
   if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) return 'Máy không nhận dạng giọng nói ngay trên máy được.';
   const { installedLocales } = await ExpoSpeechRecognitionModule.getSupportedLocales({ androidRecognitionServicePackage: ON_DEVICE }).catch(() => ({
     installedLocales: [] as string[],
   }));
-  if (installedLocales.some((l) => l.toLowerCase().startsWith('vi'))) return true;
+  if (installedLocales.some((l) => l.toLowerCase().startsWith('vi'))) return null;
   const r = await ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: LANG }).catch(() => null);
-  if (r?.status === 'download_success') return true;
+  if (r?.status === 'download_success') return null;
   return 'Đang tải gói tiếng Việt để nhận dạng ngay trên máy (có thể cần Wi‑Fi). Tải xong thì bật lại.';
 }
 
@@ -376,9 +401,9 @@ async function permissions(): Promise<string | null> {
 }
 
 /**
- * Every 30 seconds while "always listening" is on: listening is started again if
- * nothing is listening (an end that never restarted it), and an exchange stuck
- * for over 2 minutes is dropped. Runs on the native delay, so also in the background.
+ * Every 30 seconds while "always listening" is on: the microphone is opened
+ * again if it closed, and an exchange stuck for over 2 minutes is dropped.
+ * Runs on the native delay, so also in the background.
  */
 let watching = false;
 async function watchdog() {
@@ -390,12 +415,11 @@ async function watchdog() {
       const v = useVoice.getState();
       if (!v.always) break;
       if (v.status === 'listening') {
-        if (!running && next === null) {
-          log('watchdog: listening again');
-          failures = 0;
-          listen('wake');
+        if (!busy && !FinyVoice?.earsRunning()) {
+          log('watchdog: opening the microphone again');
+          await startEars();
         }
-      } else if (v.status !== 'off' && Date.now() - statusSince > 120_000) {
+      } else if (v.status !== 'off' && v.status !== 'enrolling' && Date.now() - statusSince > 120_000) {
         log(`watchdog: dropped an exchange stuck in ${v.status}`);
         cancelTalk();
       }
@@ -419,8 +443,8 @@ export function askUnlimitedBattery() {
   }
 }
 
-/** Starts the background service and listening for the name. Only while the app is on screen. */
-function startAlways(): string | null {
+/** Starts the background service and the ears. Only while the app is on screen. */
+async function startAlways(): Promise<string | null> {
   if (!FinyVoice) return 'Bản Finy này chưa có phần nghe khi chạy nền.';
   try {
     FinyVoice.startListening(LISTEN_TITLE, LISTEN_TEXT);
@@ -430,29 +454,28 @@ function startAlways(): string | null {
     log(`service not started: ${e instanceof Error ? e.name : 'error'}`);
     return `Android chưa cho Finy nghe khi chạy nền: ${e instanceof Error ? e.message : String(e)}`;
   }
-  // Already listening (the app came on screen twice in a row): keep the running recognition,
-  // but start one now if it is only waiting to retry.
-  const wasOn = useVoice.getState().always;
   setV({ always: true, error: null });
-  if (!wasOn || (!running && useVoice.getState().status === 'listening')) {
-    failures = 0;
-    setV({ status: 'listening' });
-    listen('wake');
+  if (useVoice.getState().status === 'off') setV({ status: 'listening' });
+  await loadPrint();
+  const err = busy ? null : await startEars();
+  if (err) {
+    setV({ error: err });
+    retryEars();
   }
   watchdog();
-  return null;
+  return err;
 }
 
 /** Turns "always listening" on (from Settings). Returns why it could not, or null. */
 export async function turnOn(): Promise<string | null> {
   init();
-  const err = (await permissions()) ?? (await vietnameseReady().then((r) => (r === true ? null : r)));
+  const err = (await permissions()) ?? (await vietnameseReady());
   if (err) {
     setV({ error: err });
     return err;
   }
   await setVoicePref(true);
-  const started = startAlways();
+  const started = await startAlways();
   if (started) setV({ error: started });
   // Without this Android puts Finy to sleep after a while with the screen off.
   else if (batteryLimited()) {
@@ -465,26 +488,26 @@ export async function turnOn(): Promise<string | null> {
 /** Turns "always listening" off (Settings, the notification, or an error). */
 export async function turnOff(error: string | null = null): Promise<void> {
   exchange++;
-  ++tick;
   conversation = null;
-  halt();
   FinyVoice?.stopSpeaking();
+  if (useVoice.getState().status !== 'enrolling') FinyVoice?.earsStop();
   FinyVoice?.stopListening();
-  setV({ always: false, status: 'off', error });
+  setV({ always: false, status: useVoice.getState().status === 'enrolling' ? 'enrolling' : 'off', error });
   await setVoicePref(false);
 }
 
 /** When Finy comes on screen: starts listening again if it is on but not running (e.g. after Android closed Finy). */
 export async function resumeVoice(): Promise<void> {
-  if (!(await getVoicePref())) return;
   init();
-  if (useVoice.getState().always && FinyVoice?.isListening()) return;
+  await loadPrint();
+  if (!(await getVoicePref())) return;
+  if (useVoice.getState().always && FinyVoice?.isListening() && FinyVoice.earsRunning()) return;
   const mic = await ExpoSpeechRecognitionModule.getPermissionsAsync();
   if (!mic.granted) {
     await turnOff('Finy không còn quyền dùng micro.');
     return;
   }
-  const err = startAlways();
+  const err = await startAlways();
   if (err) setV({ error: err });
   // Listening was turned on before Finy asked about battery optimization: ask once.
   else if (batteryLimited() && !(await batteryAsked())) {
@@ -497,25 +520,105 @@ export async function resumeVoice(): Promise<void> {
 export async function talk(): Promise<void> {
   init();
   const s = useVoice.getState().status;
-  if (s !== 'off' && s !== 'listening') return;
-  const err = (await permissions()) ?? (await vietnameseReady().then((r) => (r === true ? null : r)));
+  if (busy || (s !== 'off' && s !== 'listening')) return;
+  const err = (await permissions()) ?? (await vietnameseReady()) ?? (await startEars());
   if (err) {
     setV({ error: err });
     return;
   }
   setV({ error: null });
-  ask();
+  busy = true;
+  const ex = exchange;
+  try {
+    await askAndHandle();
+  } finally {
+    busy = false;
+    if (ex === exchange) resumeIdle();
+  }
 }
 
 /** Stops the current exchange (the ✕ on the banner); listening for the name goes on. */
 export function cancelTalk() {
   exchange++;
-  ++tick;
   conversation = null;
-  halt();
+  if (transcript) ExpoSpeechRecognitionModule.abort();
   FinyVoice?.stopSpeaking();
+  FinyVoice?.earsMute(false);
   FinyVoice?.hidePrompt();
-  resume();
+  busy = false;
+  resumeIdle();
+}
+
+// ---- enrolling the owner's voice (Settings) ----
+
+export const ENROLL_STEPS: { kind: 'wake' | 'sentence'; say: string }[] = [
+  { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'wake', say: 'Finy ơi' },
+  { kind: 'sentence', say: 'Finy ơi, ghi tiền mặt năm mươi nghìn ăn sáng' },
+  { kind: 'sentence', say: 'Hôm nay tôi chi hai trăm nghìn tiền chợ' },
+  { kind: 'sentence', say: 'Ghi giúp tôi một triệu tiền điện tháng này' },
+];
+
+/** Opens the ears for enrolling; calls to Finy are ignored until it ends. Returns why it could not. */
+export async function beginEnrollment(): Promise<string | null> {
+  init();
+  if (busy) return 'Finy đang bận, thử lại sau chút nhé.';
+  const err = (await permissions()) ?? (await startEars());
+  if (err) return err;
+  busy = true;
+  setV({ status: 'enrolling', error: null });
+  return null;
+}
+
+/** Records one enrollment sample: its speaker embedding, or what went wrong. */
+export async function recordSample(kind: 'wake' | 'sentence'): Promise<{ embedding: number[] | null; problem: string | null }> {
+  const u = await FinyVoice?.earsRecord(kind === 'wake' ? 4000 : 9000, 7000, 0, 900);
+  discard(u);
+  if (!u?.path) return { embedding: null, problem: 'Mình chưa nghe thấy gì. Nói lại gần máy hơn nhé.' };
+  if (!u.embedding) return { embedding: null, problem: 'Câu hơi ngắn, nói lại nhé.' };
+  return { embedding: u.embedding, problem: null };
+}
+
+/** Saves the print made from the samples; false when there are too few. Ends the enrollment. */
+export async function finishEnrollment(wake: number[][], sentences: number[][]): Promise<boolean> {
+  const p = buildPrint(wake, sentences, print?.strictness ?? 'normal');
+  if (p) {
+    await setVoicePrintRaw(p);
+    print = p;
+    log(`voice enrolled (thresholds ${p.wakeT} / ${p.voiceT})`);
+  }
+  endEnrollment();
+  setV({ enrolled: !!print });
+  return !!p;
+}
+
+/** Leaves enrolling (also when cancelled): Finy listens for its name again. */
+export function endEnrollment() {
+  if (useVoice.getState().status !== 'enrolling') return;
+  busy = false;
+  resumeIdle();
+}
+
+/** Forgets the enrolled voice: anyone can call Finy again. */
+export async function forgetVoice(): Promise<void> {
+  await setVoicePrintRaw(null);
+  print = null;
+  setV({ enrolled: false });
+}
+
+export async function getVoiceCheck(): Promise<{ enrolled: boolean; strictness: Strictness; at: number }> {
+  const p = await loadPrint();
+  return { enrolled: !!p, strictness: p?.strictness ?? 'normal', at: p?.at ?? 0 };
+}
+
+export async function setStrictness(s: Strictness): Promise<void> {
+  const p = await loadPrint();
+  if (!p) return;
+  print = { ...p, strictness: s };
+  await setVoicePrintRaw(print);
 }
 
 // ---- Finy's voice (Settings) ----
@@ -540,7 +643,7 @@ export async function listVoices(): Promise<FinyVoiceOption[]> {
   return all.filter((v) => !v.network).map((v) => ({ name: v.name, quality: v.quality, missing: !v.installed }));
 }
 
-export const PREVIEW = 'Dạ, Finy nghe. Bạn cần ghi gì?';
+export const PREVIEW = ASK;
 
 /** Plays a sample in a voice style without saving it. */
 export async function previewVoice(s: VoiceStyle): Promise<void> {

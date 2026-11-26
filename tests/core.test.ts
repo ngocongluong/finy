@@ -824,3 +824,33 @@ test("Finy's name in what the recognizer heard, and the request after it", async
   assert.ok(spoken.length < 180 && spoken.endsWith('Phần còn lại có trong khung chat.'), spoken);
   assert.deepEqual([asksBack('Bạn chi bao nhiêu?'), asksBack('Đã ghi.')], [true, false]);
 });
+
+test("the owner's voice print: built from enrollment samples, accepts the owner, rejects others", async () => {
+  const { buildPrint, cosine, parsePrint, verify, SHORT_MS } = await import('../src/lib/voicePrint');
+  // Deterministic "voices": a direction in 192 dimensions, plus a little variation per sample.
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31) * 2 - 1;
+  const voice = () => Array.from({ length: 192 }, rand);
+  const sample = (base: number[], noise: number) => base.map((x) => x + noise * rand());
+  const owner = voice();
+  const other = voice();
+  const wake = Array.from({ length: 5 }, () => sample(owner, 0.5));
+  const sentences = Array.from({ length: 3 }, () => sample(owner, 0.5));
+  assert.equal(buildPrint(wake.slice(0, 2), sentences), null);
+  const print = buildPrint(wake, sentences, 'normal', 1)!;
+  assert.ok(print.wakeT >= 0.4 && print.wakeT <= 0.75 && print.voiceT >= 0.4 && print.voiceT <= 0.75, JSON.stringify([print.wakeT, print.voiceT]));
+  assert.ok(Math.abs(cosine(print.wake, print.wake) - 1) < 1e-3);
+  // A new call by the owner passes; another voice does not, short or long.
+  assert.equal(verify(print, sample(owner, 0.5), 900).ok, true);
+  assert.equal(verify(print, sample(owner, 0.5), SHORT_MS + 500).ok, true);
+  assert.equal(verify(print, sample(other, 0.5), 900).ok, false);
+  assert.equal(verify(print, sample(other, 0.5), SHORT_MS + 500).ok, false);
+  // Strictness moves the threshold.
+  const strict = verify({ ...print, strictness: 'strict' }, sample(owner, 0.5), 900);
+  const loose = verify({ ...print, strictness: 'loose' }, sample(owner, 0.5), 900);
+  assert.ok(strict.threshold > loose.threshold);
+  // Stored and read back; junk is not a print.
+  assert.deepEqual(parsePrint(JSON.parse(JSON.stringify(print))), print);
+  assert.equal(parsePrint({ wake: [1, 2], voice: [1, 2] }), null);
+  assert.equal(parsePrint(null), null);
+});

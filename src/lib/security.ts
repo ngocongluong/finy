@@ -12,6 +12,7 @@ const K_BIO = 'finy_biometric';
 const K_VOICE = 'finy_voice_always';
 const K_VOICE_STYLE = 'finy_voice_style';
 const K_BATTERY_ASKED = 'finy_battery_asked';
+const K_VOICE_PRINT = 'finy_voice_print';
 
 export const PIN_LENGTH = 6;
 const HASH_ROUNDS = 400;
@@ -131,6 +132,24 @@ export async function getVoiceStyle(): Promise<VoiceStyle> {
   } catch {
     return DEFAULT_VOICE_STYLE;
   }
+}
+
+/**
+ * The owner's voice print (see voicePrint.ts): numbers describing the voice,
+ * no recording. Kept in the Keystore-backed store like the PIN, because Finy
+ * checks voices before it is unlocked.
+ */
+export async function getVoicePrintRaw(): Promise<unknown> {
+  try {
+    return JSON.parse((await SecureStore.getItemAsync(K_VOICE_PRINT)) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+export async function setVoicePrintRaw(print: unknown | null): Promise<void> {
+  if (print === null) await SecureStore.deleteItemAsync(K_VOICE_PRINT);
+  else await SecureStore.setItemAsync(K_VOICE_PRINT, JSON.stringify(print));
 }
 
 /** Finy asked once to run in the background without limits (it does not ask again by itself). */

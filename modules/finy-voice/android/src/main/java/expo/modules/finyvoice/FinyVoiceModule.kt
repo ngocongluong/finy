@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import java.io.File
 import java.util.Locale
 import java.util.UUID
 import androidx.core.app.NotificationManagerCompat
@@ -32,6 +33,23 @@ class FinyVoiceModule : Module() {
     get() = requireNotNull(appContext.reactContext) { "React context is not available" }
 
   private val main = Handler(Looper.getMainLooper())
+
+  // ---- the ears: the keyword spotter and speaker model (see Ears) ----
+  private var ears: Ears? = null
+
+  private fun ears(): Ears =
+    ears ?: Ears(
+      context.applicationContext,
+      onWake = { sendEvent("onWake", emptyMap<String, Any>()) },
+      onError = { message -> sendEvent("onEarsError", mapOf("message" to message)) },
+    ).also { ears = it }
+
+  private fun utteranceMap(u: Ears.Utterance): Map<String, Any?> = mapOf(
+    "path" to u.path,
+    "speechMs" to u.speechMs,
+    "levelDb" to u.levelDb.toDouble(),
+    "embedding" to u.embedding?.map { it.toDouble() },
+  )
 
   // ---- speaking (main thread only) ----
   private var tts: TextToSpeech? = null
@@ -129,13 +147,47 @@ class FinyVoiceModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("FinyVoice")
 
-    // The user tapped "Tắt" on the listening notification.
-    Events("onStopRequested")
+    // onStopRequested: the user tapped "Tắt" on the listening notification.
+    // onWake: the ears heard "Finy". onEarsError: the ears stopped (the microphone failed).
+    Events("onStopRequested", "onWake", "onEarsError")
 
     OnCreate { current = this@FinyVoiceModule }
     OnDestroy {
       if (current === this@FinyVoiceModule) current = null
+      ears?.stop()
       main.post { dropTts() }
+    }
+
+    // Opens the microphone and listens for "Finy"; resolves once listening (rejects if it cannot).
+    AsyncFunction("earsStart") { score: Double, threshold: Double, promise: Promise ->
+      ears().start(score.toFloat(), threshold.toFloat()) { ok, error ->
+        if (ok) promise.resolve(true) else promise.reject("ERR_EARS", error ?: "microphone unavailable", null)
+      }
+    }
+
+    Function("earsStop") { ears?.stop() }
+
+    Function("earsRunning") { ears?.isRunning() == true }
+
+    // While Finy speaks: nothing is heard (its own voice must not wake it).
+    Function("earsMute") { muted: Boolean -> ears?.muted = muted }
+
+    // Records the next utterance: waits up to startTimeoutMs for speech, ends after endSilenceMs
+    // of silence or maxMs; includeRecentMs of audio from before the call is included.
+    AsyncFunction("earsRecord") { maxMs: Int, startTimeoutMs: Int, includeRecentMs: Int, endSilenceMs: Int, promise: Promise ->
+      val e = ears
+      if (e == null || !e.isRunning()) {
+        promise.resolve(null)
+        return@AsyncFunction
+      }
+      e.record(maxMs, startTimeoutMs, includeRecentMs, endSilenceMs) { promise.resolve(utteranceMap(it)) }
+    }
+
+    // A recorded utterance, once transcribed: nothing stays on the phone.
+    Function("deleteFile") { path: String ->
+      // Only Finy's own recordings.
+      val file = File(path)
+      file.parentFile?.name == "finy-ears" && file.delete()
     }
 
     // Reads `text` aloud; resolves true when it was spoken to the end, false otherwise.

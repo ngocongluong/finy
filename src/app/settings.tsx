@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, TextInput, View } from 'react-native';
 import { NumberSheet, Toggle } from '../components/sheets';
+import { VoiceEnroll } from '../components/VoiceEnroll';
 import { VoicePicker } from '../components/VoicePicker';
 import { Btn, Card, Chip, Field, IconBtn, Row, Screen, Segmented, Sheet, Txt, useUi } from '../components/ui';
 import { apiKey, testKey } from '../lib/claude';
@@ -213,7 +214,7 @@ export default function Settings() {
           <Txt v="small" color={c.positive}>Đang nghe. Thử nói: “Finy ơi, ghi tiền mặt 30 nghìn ăn sáng”, hoặc gọi “Finy” rồi đợi Finy hỏi.</Txt>
         ) : null}
         <Txt v="small">
-          Nhận dạng giọng nói chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Vì bảo mật, qua giọng nói Finy chỉ nhận ghi chép (khoản tiền mặt, giao dịch), kể cả khi app đang mở: không trả lời câu hỏi về tiền bạc, không đọc số liệu, không sửa hay xoá gì. Muốn hỏi thì nhắn trong khung chat.
+          Nghe tên, so giọng và nhận dạng giọng nói đều chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Vì bảo mật, qua giọng nói Finy chỉ nhận ghi chép (khoản tiền mặt, giao dịch), kể cả khi app đang mở: không trả lời câu hỏi về tiền bạc, không đọc số liệu, không sửa hay xoá gì. Muốn hỏi thì nhắn trong khung chat.
         </Txt>
         {voiceOn && limited ? (
           <View style={{ gap: 8 }}>
@@ -238,6 +239,8 @@ export default function Settings() {
           <Btn label="Nói với Finy" kind="ghost" icon="mic-outline" style={{ flex: 1 }} onPress={() => talk()} />
           <Btn label="Cài đặt pin" kind="ghost" icon="battery-half-outline" style={{ flex: 1 }} onPress={() => Linking.openSettings()} />
         </Row>
+        <View style={{ height: 1, backgroundColor: c.border }} />
+        <VoiceEnroll />
         <View style={{ height: 1, backgroundColor: c.border }} />
         <VoicePicker />
       </Card>
