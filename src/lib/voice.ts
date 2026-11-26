@@ -49,6 +49,10 @@ const LANG = 'vi-VN';
 const ON_DEVICE = 'com.google.android.as';
 const ASK = 'Dạ, Finy nghe. Bạn cần ghi gì?';
 const LISTEN_TITLE = 'Finy đang nghe';
+// "Finy" is not a Vietnamese word: the recognizer often drops a short call to it altogether.
+// Hints spelled with Vietnamese syllables it knows (and that findWake accepts) make it far
+// more likely to write something down.
+const WAKE_HINTS = ['Finy', 'Finy ơi', 'Phi ni', 'Phi ni ơi', 'Phai ni', 'Phai ni ơi', 'Fini'];
 const LISTEN_TEXT = 'Gọi “Finy” để nhờ ghi chép · chạm để mở Finy';
 
 const sleep = (ms: number): Promise<void> => (FinyVoice ? FinyVoice.sleep(ms) : new Promise((r) => setTimeout(r, ms)));
@@ -109,7 +113,7 @@ function begin() {
       continuous: true,
       maxAlternatives: 1,
       requiresOnDeviceRecognition: true,
-      contextualStrings: ['Finy', 'Finy ơi'],
+      contextualStrings: kind === 'wake' ? WAKE_HINTS : ['Finy', 'tiền mặt', 'nghìn', 'triệu'],
     });
   } catch {
     running = false;
@@ -135,6 +139,8 @@ function retryWake() {
 
 function onResult(text: string, final: boolean) {
   if (session === 'wake') {
+    // Speech the recognizer could not write down: a missed call shows up as this in the log.
+    if (final && !text && wakeRest === null) log('speech without words');
     if (text) failures = 0;
     const w = text ? findWake(text) : null;
     if (w) wakeRest = w.rest;
