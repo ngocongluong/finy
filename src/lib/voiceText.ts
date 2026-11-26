@@ -17,6 +17,9 @@ export function plain(text: string): string {
 const ONE_WORD = new Set(['finy', 'fini', 'finny', 'phiny', 'phini', 'phinny', 'fainy', 'faini', 'phainy', 'phaini', 'fyni', 'feeny', 'fynee']);
 const FIRST = new Set(['phi', 'fi', 'phai', 'fai', 'phay', 'fay', 'fy', 'phy', 'fee']);
 const SECOND = new Set(['ni', 'ny', 'nee']);
+// The recognizer sometimes stops at the first syllable of a lone "Finy". Only when that is
+// all that was heard: "phin" in a sentence is the coffee filter.
+const LONE = new Set(['fin', 'phin', 'fine', 'fiin']);
 // Said after the name and not part of the request: "Finy ơi", "Finy à".
 const CALL = new Set(['oi', 'a', 'nay', 'nhe', 'nha']);
 
@@ -27,7 +30,8 @@ export interface Wake {
 
 /** Finds Finy's name in what was heard, and what was said after it; null when it was not called. */
 export function findWake(text: string): Wake | null {
-  const words = [...text.matchAll(/\S+/g)].map((m) => ({ raw: m[0], at: m.index ?? 0, p: plain(m[0]) }));
+  const words = [...text.matchAll(/\S+/g)].map((m) => ({ raw: m[0], at: m.index ?? 0, p: plain(m[0]) })).filter((w) => w.p);
+  if (words.length === 1 && LONE.has(words[0].p)) return { rest: '' };
   for (let i = 0; i < words.length; i++) {
     let end = -1;
     if (ONE_WORD.has(words[i].p)) end = i;

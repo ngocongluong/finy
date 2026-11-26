@@ -812,8 +812,10 @@ test("Finy's name in what the recognizer heard, and the request after it", async
   assert.deepEqual(findWake('à phai ni'), { rest: '' });
   assert.deepEqual(findWake('FINI à'), { rest: '' });
   assert.deepEqual(findWake('ừ thì finy ghi giúp 50k gửi xe'), { rest: 'ghi giúp 50k gửi xe' });
+  // A lone first syllable counts; in a sentence it does not.
+  assert.deepEqual([findWake('Fin'), findWake('phin.')], [{ rest: '' }, { rest: '' }]);
   // Everyday words are not the name.
-  for (const s of ['hôm nay trời đẹp', 'phải nói là', 'phí ngân hàng', 'phim hay', 'fine thank you']) assert.equal(findWake(s), null, s);
+  for (const s of ['hôm nay trời đẹp', 'phải nói là', 'phí ngân hàng', 'phim hay', 'fine thank you', 'pha phin cà phê', 'phải']) assert.equal(findWake(s), null, s);
   assert.deepEqual([isRequest(''), isRequest('ừ'), isRequest('ghi 300 nghìn')], [false, false, true]);
   // Read aloud: no markdown, "đ" as "đồng", a long answer cut at a sentence.
   assert.equal(speakable('**Đã ghi** 300.000 đ tiền mặt.\n- Ăn sáng'), 'Đã ghi 300.000 đồng tiền mặt. Ăn sáng');

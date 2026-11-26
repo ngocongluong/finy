@@ -47,7 +47,7 @@ const log = (msg: string) => console.log(`[finy] voice ${msg}`);
 const LANG = 'vi-VN';
 /** Google's on-device recognizer (Android System Intelligence). */
 const ON_DEVICE = 'com.google.android.as';
-const ASK = 'Dạ, bạn cần gì?';
+const ASK = 'Dạ, Finy nghe. Bạn cần ghi gì?';
 const LISTEN_TITLE = 'Finy đang nghe';
 const LISTEN_TEXT = 'Gọi “Finy” để nhờ ghi chép · chạm để mở Finy';
 
@@ -109,7 +109,7 @@ function begin() {
       continuous: true,
       maxAlternatives: 1,
       requiresOnDeviceRecognition: true,
-      contextualStrings: ['Finy'],
+      contextualStrings: ['Finy', 'Finy ơi'],
     });
   } catch {
     running = false;

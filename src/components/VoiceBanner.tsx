@@ -19,7 +19,7 @@ export function VoiceBanner() {
 
   const line =
     status === 'asking'
-      ? 'Dạ, bạn cần gì?'
+      ? 'Dạ, Finy nghe. Bạn cần ghi gì?'
       : status === 'command'
         ? heard || 'Đang nghe…'
         : status === 'working'
