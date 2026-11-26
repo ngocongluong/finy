@@ -316,6 +316,22 @@ export interface AppSettings {
   lastSyncReport: { ts: number; text: string; error: boolean } | null;
   /** Overrides the key embedded at build time. */
   apiKeyOverride: string | null;
+  /** The fixed expense the cash notes are compared with (the monthly cash allowance), if any. */
+  cashBudgetId?: string | null;
+}
+
+/**
+ * A cash expense noted down on the Cash page. Only a note: it is never
+ * counted in the cash-flow table, which already has a fixed amount set aside
+ * for cash.
+ */
+export interface CashNote {
+  id: string;
+  /** When it was noted (or the chosen day, at the time it was noted). */
+  ts: number;
+  date: string; // YYYY-MM-DD (local)
+  amount: number;
+  note: string;
 }
 
 /** Money the user has now, as entered, and the month it was entered (the projection starts there). */

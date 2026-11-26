@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annuityPayment, CARD_KEY, creditCycle, normalizePaid, paidSummary, debtAtEnd, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanSpend, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
+import { annuityPayment, CARD_KEY, cashMonth, frequentNotes, creditCycle, normalizePaid, paidSummary, debtAtEnd, debtNow, familyLoanDueMonth, familyLoanInterest, familyLoanOwed, fixedPeriodAt, fixedPeriodsAmountAt, loanDebtNow, loanFinalMonth, loanMonth, loanPeriods, normalizeFixedPeriods, loanSchedule, normalizeLoan, projectedCash, creditSpent, cycleMonthOf, dailyStats, flowTable, instalmentAmount, loanBalance, loanPaidBefore, loanPart, loanPayment, loanSpend, loanTotalInterest, instalmentLines, instalmentPart, markCreditItem, migrateLegacyBudget, monthFlow, netWorth, type Budget } from '../src/lib/finance';
 import { daysInMonth, fmtInput, fmtPct, fmtTime, fmtVND, maskMoney, monthShort, parseAmount, shiftMonth } from '../src/lib/format';
 import { ALLOWED_SENDER_DOMAINS, fxToVnd, htmlToText, looksLikeTransaction, parseHsbcCardEmail, senderAllowed } from '../src/lib/mailText';
 import { project, projectAll, resolvePlan, DEFAULT_PLAN, yearReaching, type PlanInputs } from '../src/lib/plan';
 import { applyUiPatch, DEFAULT_UI, normalizeUi } from '../src/lib/theme';
-import type { FamilyLoan, FixedItem, Loan, OneOff, Tx } from '../src/lib/types';
+import type { CashNote, FamilyLoan, FixedItem, Loan, OneOff, Tx } from '../src/lib/types';
 
 // Made-up household used as the fixture.
 const fixed: FixedItem[] = [
@@ -779,4 +779,26 @@ test('expenses ticked off as paid: planned, paid, and what is set aside either w
   const all = paidSummary(flow, ['fixed:o1', 'fixed:o2', 'fixed:o3', 'fixed:o4', 'fixed:o5', CARD_KEY]);
   assert.deepEqual([all.paid, all.left, all.count, all.actualSaving], [38_000_000, 0, 6, 12_000_000]);
   assert.deepEqual(normalizePaid({ '2026-12': ['a', 'a', '', 3], bad: ['x'], '2027-01': [], '2027-02': 'x' }), { '2026-12': ['a'] });
+});
+
+test('cash notes: a month day by day with totals, and the notes used most often', () => {
+  const at = (date: string, h: number) => new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), h).getTime();
+  const n = (id: string, date: string, h: number, amount: number, note: string): CashNote => ({ id, ts: at(date, h), date, amount, note });
+  const notes = [
+    n('a', '2026-11-03', 7, 30_000, 'Ăn sáng'),
+    n('b', '2026-11-03', 12, 5_000, 'Gửi xe'),
+    n('c', '2026-11-05', 7, 35_000, 'ăn sáng'),
+    n('d', '2026-10-31', 9, 200_000, 'Chợ'),
+    n('e', '2026-11-05', 18, 120_000, ''),
+  ];
+  const m = cashMonth(notes, '2026-11');
+  assert.deepEqual([m.total, m.count], [190_000, 4]);
+  assert.deepEqual(m.days.map((d) => [d.date, d.total, d.notes.map((x) => x.id)]), [
+    ['2026-11-05', 155_000, ['e', 'c']],
+    ['2026-11-03', 35_000, ['b', 'a']],
+  ]);
+  assert.deepEqual(cashMonth(notes, '2026-12'), { total: 0, count: 0, days: [] });
+  // Same words in any case count together; empty notes are not suggested; ties go to the most recent.
+  assert.deepEqual(frequentNotes(notes), ['ăn sáng', 'Gửi xe', 'Chợ']);
+  assert.deepEqual(frequentNotes(notes, 1), ['ăn sáng']);
 });

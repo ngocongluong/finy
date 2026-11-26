@@ -235,6 +235,8 @@ export default function Home() {
       title={ui.title}
       right={
         <>
+          {/* One tap to note down a cash expense. */}
+          <IconBtn name="cash-outline" onPress={() => router.push('/cash')} label="Ghi chi tiền mặt" />
           <IconBtn name="settings-outline" onPress={() => router.push('/settings')} label="Cài đặt" />
         </>
       }>

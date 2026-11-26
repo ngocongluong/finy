@@ -8,7 +8,7 @@ import { dateKey, monthKey, uid } from './format';
 import { DEFAULT_PLAN } from './plan';
 import { getDbKey, hasPin } from './security';
 import { applyUiPatch, DEFAULT_UI, normalizeUi, type UiPatch } from './theme';
-import type { Account, AppSettings, CashOnHand, ChatMsg, CreditCardInfo, FamilyLoan, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PaidMarks, PlanParams, Seed, Tx, UiConfig } from './types';
+import type { Account, AppSettings, CashNote, CashOnHand, ChatMsg, CreditCardInfo, FamilyLoan, FixedItem, Instalment, Loan, MonthBudget, OneOff, Overrides, PaidMarks, PlanParams, Seed, Tx, UiConfig } from './types';
 
 /**
  * The address HSBC Vietnam sends card-transaction alerts from. Which senders
@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastSyncTs: null,
   lastSyncReport: null,
   apiKeyOverride: null,
+  cashBudgetId: null,
 };
 
 type Phase = 'boot' | 'setup' | 'locked' | 'ready';
@@ -57,6 +58,8 @@ interface State {
   cash: CashOnHand | null;
   accounts: Account[];
   txs: Tx[];
+  /** Cash expenses noted down, newest first. Notes only: not in the cash-flow table. */
+  cashNotes: CashNote[];
   plan: PlanParams;
   settings: AppSettings;
   chat: ChatMsg[];
@@ -81,6 +84,10 @@ interface State {
   setCreditCard: (info: CreditCardInfo) => void;
   upsertInstalment: (p: Omit<Instalment, 'id'> & { id?: string }) => Instalment;
   deleteInstalment: (id: string) => void;
+  /** Notes down a cash expense (today unless a day is given). */
+  addCashNote: (n: { amount: number; note: string; date?: string }) => CashNote;
+  updateCashNote: (n: CashNote) => void;
+  deleteCashNote: (id: string) => void;
   upsertLoan: (l: Omit<Loan, 'id'> & { id?: string }) => Loan;
   deleteLoan: (id: string) => void;
   upsertFamilyLoan: (l: Omit<FamilyLoan, 'id'> & { id?: string }) => FamilyLoan;
@@ -117,6 +124,11 @@ function monthRange(from?: string, to?: string): { fromMonth?: string; toMonth?:
   let b = ok(to);
   if (a && b && a > b) [a, b] = [b, a];
   return { ...(a ? { fromMonth: a } : {}), ...(b ? { toMonth: b } : {}) };
+}
+
+/** Newest day first; within a day, latest first. */
+function sortCashNotes(list: CashNote[]): CashNote[] {
+  return [...list].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
 }
 
 function persist(key: string, value: unknown) {
@@ -158,6 +170,7 @@ export const useStore = create<State>((set, get) => ({
   cash: null,
   accounts: [],
   txs: [],
+  cashNotes: [],
   plan: DEFAULT_PLAN,
   settings: DEFAULT_SETTINGS,
   chat: [],
@@ -182,7 +195,7 @@ export const useStore = create<State>((set, get) => ({
         await db.kvSet('gmailReset1', true);
         await db.kvSet('gmailReset2', true);
       }
-      const [ui, fixed, oneOffs, overrides, paid, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, apiHistoryKey, txs] = await Promise.all([
+      const [ui, fixed, oneOffs, overrides, paid, creditCard, instalments, loans, familyLoans, cash, creditMarked, legacyBudgets, accounts, plan, settings, chat, apiHistory, apiHistoryKey, cashNotes, txs] = await Promise.all([
         db.kvGet<UiConfig>('ui'),
         db.kvGet<FixedItem[]>('fixed'),
         db.kvGet<OneOff[]>('oneOffs'),
@@ -201,6 +214,7 @@ export const useStore = create<State>((set, get) => ({
         db.kvGet<ChatMsg[]>('chat'),
         db.kvGet<unknown[]>('apiHistory'),
         db.kvGet<string>('apiHistoryKey'),
+        db.kvGet<CashNote[]>('cashNotes'),
         db.txAll(),
       ]);
       // Three starting points: this model's own data, data from the older
@@ -233,6 +247,7 @@ export const useStore = create<State>((set, get) => ({
         chat: chat ?? [],
         apiHistory: apiHistory ?? [],
         apiHistoryKey: apiHistoryKey ?? null,
+        cashNotes: sortCashNotes(cashNotes ?? []),
         txs,
         revealed: [],
       });
@@ -387,6 +402,33 @@ export const useStore = create<State>((set, get) => ({
     persist('familyLoans', familyLoans);
   },
 
+  addCashNote: (n) => {
+    const today = dateKey();
+    const date = n.date && /^\d{4}-\d{2}-\d{2}$/.test(n.date) ? n.date : today;
+    // Noted today: now. Noted for another day: that day, at the current time of day.
+    const now = new Date();
+    const [y, m, d] = date.split('-').map(Number);
+    const ts = date === today ? now.getTime() : new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds()).getTime();
+    const full: CashNote = { id: uid(), ts, date, amount: Math.max(0, Math.round(n.amount)), note: n.note.trim() };
+    const cashNotes = sortCashNotes([full, ...get().cashNotes]);
+    set({ cashNotes });
+    persist('cashNotes', cashNotes);
+    return full;
+  },
+
+  updateCashNote: (n) => {
+    const full: CashNote = { ...n, amount: Math.max(0, Math.round(n.amount)), note: n.note.trim() };
+    const cashNotes = sortCashNotes(get().cashNotes.map((x) => (x.id === n.id ? full : x)));
+    set({ cashNotes });
+    persist('cashNotes', cashNotes);
+  },
+
+  deleteCashNote: (id) => {
+    const cashNotes = get().cashNotes.filter((x) => x.id !== id);
+    set({ cashNotes });
+    persist('cashNotes', cashNotes);
+  },
+
   deleteInstalment: (id) => {
     const instalments = get().instalments.filter((x) => x.id !== id);
     set({ instalments });
@@ -533,6 +575,7 @@ export const useStore = create<State>((set, get) => ({
       cash: null,
       accounts: [],
       txs: [],
+      cashNotes: [],
       plan: DEFAULT_PLAN,
       settings: DEFAULT_SETTINGS,
       chat: [],

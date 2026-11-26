@@ -1,7 +1,7 @@
 // Pure calculations: the monthly cash-flow table, the credit-card statement
 // cycle, net worth, daily allowance.
 import { dateKey, daysInMonth, shiftMonth, uid } from './format';
-import type { Account, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
+import type { Account, CashNote, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, LoanPeriod, MonthBudget, OneOff, Overrides, Tx } from './types';
 
 /** Everything the user enters to describe their monthly money. */
 export interface Budget {
@@ -725,6 +725,44 @@ export function projectedCash(b: Budget, cash: { amount: number; month: string }
 /** What is still owed on all bank loans at the start of `month`. */
 export function loanDebtNow(loans: Loan[] | undefined, month: string): number {
   return (loans ?? []).reduce((s, l) => s + loanBalance(l, loanPaidBefore(l, month)), 0);
+}
+
+// ---- cash notes (notes only, never in the cash-flow table) ----
+
+/** One day of cash notes. */
+export interface CashDay {
+  date: string;
+  total: number;
+  notes: CashNote[];
+}
+
+/** A month of cash notes: the total, how many, and day by day (newest day first). */
+export function cashMonth(notes: CashNote[], month: string): { total: number; count: number; days: CashDay[] } {
+  const mine = notes.filter((n) => n.date.startsWith(`${month}-`)).sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
+  const days: CashDay[] = [];
+  for (const n of mine) {
+    const last = days[days.length - 1];
+    if (last && last.date === n.date) {
+      last.notes.push(n);
+      last.total += n.amount;
+    } else days.push({ date: n.date, total: n.amount, notes: [n] });
+  }
+  return { total: total(mine), count: mine.length, days };
+}
+
+/** The notes written most often among the latest ones (ties: the most recent first), for one-tap reuse. */
+export function frequentNotes(notes: CashNote[], n = 6, lookBack = 200): string[] {
+  const latest = [...notes].sort((a, b) => b.ts - a.ts).slice(0, lookBack);
+  const count = new Map<string, { label: string; times: number; first: number }>();
+  latest.forEach((x, i) => {
+    const label = x.note.trim();
+    if (!label) return;
+    const key = label.toLocaleLowerCase('vi');
+    const cur = count.get(key);
+    if (cur) cur.times++;
+    else count.set(key, { label, times: 1, first: i });
+  });
+  return [...count.values()].sort((a, b) => b.times - a.times || a.first - b.first).slice(0, n).map((x) => x.label);
 }
 
 // ---- net worth and day-to-day spending ----

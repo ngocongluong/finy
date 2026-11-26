@@ -2,10 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Pressable, Switch, Text, View } from 'react-native';
-import { creditCycle, familyLoanDueMonth, familyLoanInterest, fixedBase, fixedPeriodAt, fixedPeriodsAmountAt, instalmentAmount, loanBalance, loanFinalMonth, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeFamilyLoan, normalizeLoan } from '../lib/finance';
+import { creditCycle, familyLoanDueMonth, familyLoanInterest, fixedActive, fixedAmount, fixedBase, fixedPeriodAt, fixedPeriodsAmountAt, instalmentAmount, loanBalance, loanFinalMonth, loanPaidBefore, loanPeriods, loanTotalInterest, normalizeFamilyLoan, normalizeLoan } from '../lib/finance';
 import { dateKey, dayLabel, fmtVND, monthKey, monthLabel, monthShort, shiftMonth } from '../lib/format';
 import { useStore } from '../lib/store';
-import type { Account, AccountKind, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, OneOff, Tx } from '../lib/types';
+import type { Account, AccountKind, CashNote, FamilyLoan, FixedItem, FixedPeriod, Instalment, Loan, OneOff, Tx } from '../lib/types';
 import { AmountField, Btn, Chip, Field, IconBtn, Row, Segmented, Sheet, Txt, useMoney, useUi } from './ui';
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -30,7 +30,7 @@ function confirmDelete(what: string, onYes: () => void) {
   ]);
 }
 
-function shiftDate(date: string, delta: number): string {
+export function shiftDate(date: string, delta: number): string {
   const [y, m, d] = date.split('-').map(Number);
   return dateKey(new Date(y, m - 1, d + delta));
 }
@@ -108,6 +108,102 @@ export function TxSheet({ visible, onClose, tx }: { visible: boolean; onClose: (
           }
         />
       ) : null}
+    </Sheet>
+  );
+}
+
+/** Edit or delete one cash note (they are added on the Cash page itself). */
+export function CashNoteSheet({ visible, onClose, item }: { visible: boolean; onClose: () => void; item: CashNote | null }) {
+  const update = useStore((s) => s.updateCashNote);
+  const remove = useStore((s) => s.deleteCashNote);
+  const [amount, setAmount] = useState(0);
+  const [note, setNote] = useState('');
+  const [date, setDate] = useState(dateKey());
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    if (!visible || !item) return;
+    setAmount(item.amount);
+    setNote(item.note);
+    setDate(item.date);
+    setKey((k) => k + 1);
+  }, [visible, item]);
+
+  const today = dateKey();
+  const save = () => {
+    if (!item || !(amount > 0)) return;
+    // Moved to another day: same time of day on that day.
+    const [y, m, d] = date.split('-').map(Number);
+    const old = new Date(item.ts);
+    const ts = date === item.date ? item.ts : new Date(y, m - 1, d, old.getHours(), old.getMinutes()).getTime();
+    update({ ...item, amount, note, date, ts });
+    onClose();
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Sửa khoản tiền mặt" footer={<Btn label="Lưu" icon="checkmark" onPress={save} disabled={!(amount > 0)} />}>
+      <AmountField key={key} label="Số tiền" value={amount} onChange={setAmount} />
+      <Field label="Ghi chú" value={note} onChangeText={setNote} placeholder="Ăn sáng, gửi xe, chợ…" />
+      <Row>
+        <IconBtn name="chevron-back" onPress={() => setDate(shiftDate(date, -1))} label="Ngày trước" />
+        <Txt v="heading">{dayLabel(date, today)}</Txt>
+        <IconBtn name="chevron-forward" onPress={() => date < today && setDate(shiftDate(date, 1))} label="Ngày sau" />
+      </Row>
+      {item ? (
+        <Btn
+          label="Xoá khoản này"
+          kind="danger"
+          icon="trash-outline"
+          onPress={() =>
+            confirmDelete('khoản tiền mặt này', () => {
+              remove(item.id);
+              onClose();
+            })
+          }
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
+/** Picks the fixed expense the cash notes are compared with (the monthly cash allowance). */
+export function CashBudgetSheet({ visible, onClose, month }: { visible: boolean; onClose: () => void; month: string }) {
+  const { c } = useUi();
+  const money = useMoney();
+  const fixed = useStore((s) => s.fixed);
+  const overrides = useStore((s) => s.overrides);
+  const chosen = useStore((s) => s.settings.cashBudgetId ?? null);
+  const setSettings = useStore((s) => s.setSettings);
+  // Card plans and items charged to the card are not paid in cash.
+  const items = fixed.filter((f) => f.direction === 'out' && f.kind !== 'credit' && !f.onCard);
+  const pick = (id: string | null) => {
+    setSettings({ cashBudgetId: id });
+    onClose();
+  };
+  const choice = (id: string | null, name: string, sub: string) => (
+    <Pressable
+      key={id ?? 'none'}
+      onPress={() => pick(id)}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: chosen === id }}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minHeight: 52, justifyContent: 'center' })}>
+      <Row style={{ gap: 12 }}>
+        <Ionicons name={chosen === id ? 'radio-button-on' : 'radio-button-off'} size={22} color={chosen === id ? c.accent : c.muted} />
+        <View style={{ flex: 1 }}>
+          <Txt numberOfLines={1}>{name}</Txt>
+          <Txt v="small">{sub}</Txt>
+        </View>
+      </Row>
+    </Pressable>
+  );
+  return (
+    <Sheet visible={visible} onClose={onClose} title="So sánh với khoản dự trù">
+      <Txt v="small">Chọn khoản chi cố định dành cho tiền mặt. Trang Tiền mặt sẽ cho biết đã ghi bao nhiêu so với khoản này; bảng thu chi không đổi.</Txt>
+      {choice(null, 'Không so sánh', 'Chỉ ghi chú')}
+      {items.map((f) =>
+        choice(f.id, f.name, fixedActive(f, month) ? `${money(fixedAmount({ overrides }, f, month))} trong ${monthLabel(month).toLowerCase()}` : `không áp dụng ${monthLabel(month).toLowerCase()}`),
+      )}
+      {items.length === 0 ? <Txt v="label">Chưa có khoản chi cố định nào. Thêm ở Ngân sách → Cố định.</Txt> : null}
     </Sheet>
   );
 }

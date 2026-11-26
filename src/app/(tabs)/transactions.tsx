@@ -75,6 +75,8 @@ export default function Transactions() {
         ) : null}
       </Card>
 
+      <Btn label="Ghi chú chi tiền mặt" icon="cash-outline" kind="ghost" onPress={() => router.push('/cash')} />
+
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Chip label="Tất cả" active={filter === 'all'} onPress={() => setFilter('all')} />
         <Chip label="Nhập tay" active={filter === 'manual'} onPress={() => setFilter('manual')} />
