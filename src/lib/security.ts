@@ -11,6 +11,7 @@ const K_FAILS = 'finy_pin_fails';
 const K_BIO = 'finy_biometric';
 const K_VOICE = 'finy_voice_always';
 const K_VOICE_STYLE = 'finy_voice_style';
+const K_BATTERY_ASKED = 'finy_battery_asked';
 
 export const PIN_LENGTH = 6;
 const HASH_ROUNDS = 400;
@@ -130,6 +131,15 @@ export async function getVoiceStyle(): Promise<VoiceStyle> {
   } catch {
     return DEFAULT_VOICE_STYLE;
   }
+}
+
+/** Finy asked once to run in the background without limits (it does not ask again by itself). */
+export async function batteryAsked(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(K_BATTERY_ASKED)) === '1';
+}
+
+export async function setBatteryAsked(): Promise<void> {
+  await SecureStore.setItemAsync(K_BATTERY_ASKED, '1');
 }
 
 export async function setVoiceStyle(style: VoiceStyle): Promise<void> {

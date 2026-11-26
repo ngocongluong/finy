@@ -12,7 +12,7 @@ import { withoutAutoLock } from '../lib/lockGuard';
 import { biometricAvailable, getBiometricPref, PIN_LENGTH, setBiometricPref, setPin, verifyPin } from '../lib/security';
 import { useStore } from '../lib/store';
 import { alpha } from '../lib/theme';
-import { talk, turnOff, turnOn, useVoice } from '../lib/voice';
+import { askUnlimitedBattery, batteryLimited, talk, turnOff, turnOn, useVoice } from '../lib/voice';
 
 const LOCK_OPTIONS = [
   { value: 0, label: 'Ngay lập tức' },
@@ -151,6 +151,11 @@ export default function Settings() {
   const embedded = !settings.apiKeyOverride && !!apiKey();
   const voiceOn = useVoice((s) => s.always);
   const voiceError = useVoice((s) => s.error);
+  // Battery optimization can put Finy to sleep: checked when Settings opens and after asking.
+  const [limited, setLimited] = useState(() => batteryLimited());
+  useEffect(() => {
+    if (voiceOn) setLimited(batteryLimited());
+  }, [voiceOn]);
 
   return (
     <Screen title="Cài đặt" right={<IconBtn name="close" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Đóng" />}>
@@ -210,11 +215,29 @@ export default function Settings() {
         <Txt v="small">
           Nhận dạng giọng nói chạy ngay trên máy: âm thanh không rời khỏi máy, chỉ câu bạn nói sau tên Finy được gửi tới Claude. Vì bảo mật, qua giọng nói Finy chỉ nhận ghi chép (khoản tiền mặt, giao dịch), kể cả khi app đang mở: không trả lời câu hỏi về tiền bạc, không đọc số liệu, không sửa hay xoá gì. Muốn hỏi thì nhắn trong khung chat.
         </Txt>
+        {voiceOn && limited ? (
+          <View style={{ gap: 8 }}>
+            <Txt v="small" color={c.warning}>
+              Android vẫn đang tối ưu pin cho Finy: tắt màn hình lâu, Finy có thể bị cho ngủ và không nghe nữa.
+            </Txt>
+            <Btn
+              label="Cho Finy chạy nền không giới hạn"
+              kind="ghost"
+              icon="battery-charging-outline"
+              onPress={() => {
+                askUnlimitedBattery();
+                // Read again when the dialog has been answered.
+                setTimeout(() => setLimited(batteryLimited()), 4000);
+              }}
+            />
+          </View>
+        ) : voiceOn ? (
+          <Txt v="small" color={c.positive}>Finy được chạy nền không giới hạn.</Txt>
+        ) : null}
         <Row style={{ gap: 10 }}>
           <Btn label="Nói với Finy" kind="ghost" icon="mic-outline" style={{ flex: 1 }} onPress={() => talk()} />
           <Btn label="Cài đặt pin" kind="ghost" icon="battery-half-outline" style={{ flex: 1 }} onPress={() => Linking.openSettings()} />
         </Row>
-        <Txt v="small">Để Android không tắt Finy khi chạy nền: Cài đặt pin → Pin → Không hạn chế.</Txt>
         <View style={{ height: 1, backgroundColor: c.border }} />
         <VoicePicker />
       </Card>

@@ -18,7 +18,7 @@ import { create } from 'zustand';
 import FinyVoice from '../../modules/finy-voice';
 import { voiceEntry } from './claude';
 import { uid } from './format';
-import { DEFAULT_VOICE_STYLE, getVoicePref, getVoiceStyle, hasPin, setVoicePref, setVoiceStyle, type VoiceStyle } from './security';
+import { batteryAsked, DEFAULT_VOICE_STYLE, getVoicePref, getVoiceStyle, hasPin, setBatteryAsked, setVoicePref, setVoiceStyle, type VoiceStyle } from './security';
 import { useStore } from './store';
 import { asksBack, findWake, isRequest, speakable } from './voiceText';
 
@@ -37,8 +37,12 @@ interface VoiceState {
 }
 
 export const useVoice = create<VoiceState>(() => ({ status: 'off', always: false, heard: '', reply: '', error: null }));
+let statusSince = Date.now(); // when the status last changed (the watchdog reads it)
 const setV = (p: Partial<VoiceState>) => {
-  if (p.status && p.status !== useVoice.getState().status) log(`status ${p.status}`);
+  if (p.status && p.status !== useVoice.getState().status) {
+    log(`status ${p.status}`);
+    statusSince = Date.now();
+  }
   useVoice.setState(p);
 };
 /** Steps and error codes only, never what was said: enough to follow an exchange in logcat. */
@@ -371,6 +375,50 @@ async function permissions(): Promise<string | null> {
   return null;
 }
 
+/**
+ * Every 30 seconds while "always listening" is on: listening is started again if
+ * nothing is listening (an end that never restarted it), and an exchange stuck
+ * for over 2 minutes is dropped. Runs on the native delay, so also in the background.
+ */
+let watching = false;
+async function watchdog() {
+  if (watching) return;
+  watching = true;
+  try {
+    while (useVoice.getState().always) {
+      await sleep(30_000);
+      const v = useVoice.getState();
+      if (!v.always) break;
+      if (v.status === 'listening') {
+        if (!running && next === null) {
+          log('watchdog: listening again');
+          failures = 0;
+          listen('wake');
+        }
+      } else if (v.status !== 'off' && Date.now() - statusSince > 120_000) {
+        log(`watchdog: dropped an exchange stuck in ${v.status}`);
+        cancelTalk();
+      }
+    }
+  } finally {
+    watching = false;
+  }
+}
+
+/** Whether Android may put Finy to sleep in the background (battery optimization). */
+export function batteryLimited(): boolean {
+  return !!FinyVoice && !FinyVoice.ignoresBatteryOptimizations();
+}
+
+/** Android's dialog to let Finy run in the background without limits. */
+export function askUnlimitedBattery() {
+  try {
+    FinyVoice?.requestIgnoreBatteryOptimizations();
+  } catch {
+    // Some phones have no such dialog: the battery settings button still works.
+  }
+}
+
 /** Starts the background service and listening for the name. Only while the app is on screen. */
 function startAlways(): string | null {
   if (!FinyVoice) return 'Bản Finy này chưa có phần nghe khi chạy nền.';
@@ -391,6 +439,7 @@ function startAlways(): string | null {
     setV({ status: 'listening' });
     listen('wake');
   }
+  watchdog();
   return null;
 }
 
@@ -405,6 +454,11 @@ export async function turnOn(): Promise<string | null> {
   await setVoicePref(true);
   const started = startAlways();
   if (started) setV({ error: started });
+  // Without this Android puts Finy to sleep after a while with the screen off.
+  else if (batteryLimited()) {
+    await setBatteryAsked();
+    askUnlimitedBattery();
+  }
   return started;
 }
 
@@ -432,6 +486,11 @@ export async function resumeVoice(): Promise<void> {
   }
   const err = startAlways();
   if (err) setV({ error: err });
+  // Listening was turned on before Finy asked about battery optimization: ask once.
+  else if (batteryLimited() && !(await batteryAsked())) {
+    await setBatteryAsked();
+    askUnlimitedBattery();
+  }
 }
 
 /** The mic button: Finy asks what you need right away (no need to say its name). */

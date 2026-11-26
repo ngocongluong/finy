@@ -13,6 +13,10 @@ declare class FinyVoiceModule extends NativeModule<Events> {
   updateListening(title: string, text: string): void;
   stopListening(): void;
   isListening(): boolean;
+  /** Whether Finy is left out of battery optimization. */
+  ignoresBatteryOptimizations(): boolean;
+  /** Android's dialog to let Finy run in the background without limits. */
+  requestIgnoreBatteryOptimizations(): void;
   /** Heads-up notification with Finy's question or answer. */
   showPrompt(title: string, text: string): void;
   hidePrompt(): void;
